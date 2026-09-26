@@ -513,4 +513,114 @@ class SpatialExpressionReconstructorTest {
         assertEquals("16", (MathEngine.evaluate(sorted[1].normalizedText) as MathResult.Success).formatted)
         assertEquals("8", (MathEngine.evaluate(sorted[2].normalizedText) as MathResult.Success).formatted)
     }
+
+    @Test
+    fun testFullWorksheetDenseMultiRowColumnAcceptance() {
+        // Complete 12-problem dense worksheet acceptance test (6 rows x 2 columns)
+        // Covering all four arithmetic operations (+, -, ×, ÷) with Unicode box-drawing rules (────)
+        //
+        // Row 1:  5 / + 7 / ──── (12)      8 / - 5 / ──── (3)
+        // Row 2:  8 / - 7 / ──── (1)       9 / + 7 / ──── (16)
+        // Row 3:  5 / × 2 / ──── (10)      5 / + 4 / ──── (9)
+        // Row 4:  4 / - 4 / ──── (0)       4 / × 4 / ──── (16)
+        // Row 5: 12 / ÷ 3 / ──── (4)       8 / × 6 / ──── (48)
+        // Row 6:  6 / × 8 / ──── (48)      8 / + 4 / ──── (12)
+
+        val rawLines = mutableListOf<RawTextLine>()
+
+        data class ProblemSpec(
+            val col: Int, // 0 for left, 1 for right
+            val row: Int, // 0 to 5
+            val topNum: String,
+            val op: String,
+            val bottomNum: String,
+            val expectedExpr: String,
+            val expectedResult: String
+        )
+
+        val specs = listOf(
+            ProblemSpec(0, 0, "5", "+", "7", "5 + 7", "12"),
+            ProblemSpec(1, 0, "8", "−", "5", "8 - 5", "3"),
+
+            ProblemSpec(0, 1, "8", "−", "7", "8 - 7", "1"),
+            ProblemSpec(1, 1, "9", "+", "7", "9 + 7", "16"),
+
+            ProblemSpec(0, 2, "5", "×", "2", "5 * 2", "10"),
+            ProblemSpec(1, 2, "5", "+", "4", "5 + 4", "9"),
+
+            ProblemSpec(0, 3, "4", "-", "4", "4 - 4", "0"),
+            ProblemSpec(1, 3, "4", "×", "4", "4 * 4", "16"),
+
+            ProblemSpec(0, 4, "12", "÷", "3", "12 / 3", "4"),
+            ProblemSpec(1, 4, "8", "×", "6", "8 * 6", "48"),
+
+            ProblemSpec(0, 5, "6", "×", "8", "6 * 8", "48"),
+            ProblemSpec(1, 5, "8", "+", "4", "8 + 4", "12")
+        )
+
+        for (spec in specs) {
+            val leftBase = if (spec.col == 0) 0.18f else 0.58f
+            val topBase = 0.05f + spec.row * 0.15f
+
+            // Top operand
+            rawLines.add(
+                RawTextLine(
+                    rawText = spec.topNum,
+                    normalizedText = spec.topNum,
+                    bounds = RectBounds(leftBase + 0.06f, topBase, leftBase + 0.14f, topBase + 0.035f),
+                    confidence = 0.94f,
+                    pixelHeight = 22f
+                )
+            )
+
+            // Combined operator + bottom operand line (e.g. "+ 7", "÷ 3", "× 8")
+            val opRowText = "${spec.op} ${spec.bottomNum}"
+            rawLines.add(
+                RawTextLine(
+                    rawText = opRowText,
+                    normalizedText = ExpressionNormalizer.normalize(opRowText),
+                    bounds = RectBounds(leftBase + 0.01f, topBase + 0.040f, leftBase + 0.14f, topBase + 0.075f),
+                    confidence = 0.91f,
+                    pixelHeight = 22f
+                )
+            )
+
+            // Separator line (────)
+            rawLines.add(
+                RawTextLine(
+                    rawText = "────",
+                    normalizedText = "----",
+                    bounds = RectBounds(leftBase, topBase + 0.082f, leftBase + 0.15f, topBase + 0.090f),
+                    confidence = 0.95f,
+                    pixelHeight = 6f
+                )
+            )
+        }
+
+        var candCount = 0
+        val candidates = SpatialExpressionReconstructor.reconstruct(rawLines) { "worksheet-${++candCount}" }
+
+        // Must independently identify all 12 problems without merging neighbors or row leaks
+        assertEquals("Must recognize exactly 12 problems on dense worksheet", 12, candidates.size)
+
+        // Verify each problem's mathematical expression and calculated result
+        for (spec in specs) {
+            val matching = candidates.find { it.normalizedText == spec.expectedExpr }
+            assertTrue("Expected to find candidate for '${spec.expectedExpr}'", matching != null)
+
+            val mathResult = MathEngine.evaluate(matching!!.normalizedText)
+            assertTrue(mathResult is MathResult.Success)
+            assertEquals(
+                "Result for '${spec.expectedExpr}' must equal ${spec.expectedResult}",
+                spec.expectedResult,
+                (mathResult as MathResult.Success).formatted
+            )
+
+            // Must be tagged as VERTICAL_COLUMN layout
+            assertEquals(ExpressionLayout.VERTICAL_COLUMN, matching.layout)
+
+            // Content bounds must be tightly centered on digits column
+            assertTrue("Content bounds must be narrower than or equal to total box", matching.contentBounds.width <= matching.boundingBox.width)
+        }
+    }
 }

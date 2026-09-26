@@ -83,7 +83,7 @@ object SpatialExpressionReconstructor {
 
     fun isSeparatorLine(text: String): Boolean {
         val trimmed = text.trim()
-        return trimmed.isNotEmpty() && trimmed.all { it in "-=_—–" }
+        return trimmed.isNotEmpty() && trimmed.all { it in "-=_—–─━―~" }
     }
 
     fun isPureNumber(text: String): Boolean {
@@ -96,7 +96,7 @@ object SpatialExpressionReconstructor {
         val trimmed = stripProblemNumber(text).trim()
         if (trimmed.length != 1) return false
         val c = trimmed.first()
-        return c in "+-*/" || c in "xX×•÷"
+        return c in "+-*/" || c in "xX×•÷:−–—＋"
     }
 
     fun extractOperatorAndNumber(text: String): Pair<Char, String>? {
@@ -306,6 +306,9 @@ object SpatialExpressionReconstructor {
         // 2d. Sort all candidate rows by their vertical top position
         columnRows.sortBy { it.bounds.top }
 
+        // Identify all separator lines in the frame to serve as structural problem boundaries
+        val separatorLines = lines.filter { isSeparatorLine(it.rawText) || isSeparatorLine(it.normalizedText) }
+
         // 2e. Cluster column rows into distinct column problems
         val clusters = mutableListOf<ColumnCluster>()
         for (row in columnRows) {
@@ -316,6 +319,17 @@ object SpatialExpressionReconstructor {
                 val lastRow = cluster.rows.last()
 
                 if (row.bounds.top < lastRow.bounds.top) continue
+
+                // Barrier 1: In elementary arithmetic, you never have an operand without an operator following an operator row
+                if (cluster.rows.size >= 2 && row.operator == null) continue
+
+                // Barrier 2: Hard structural barrier: a horizontal separator line between lastRow and row indicates a separate problem
+                val hasSeparatorBetween = separatorLines.any { sep ->
+                    val vBetween = sep.bounds.centerY in lastRow.bounds.bottom..row.bounds.top
+                    val hOverlap = max(0f, min(sep.bounds.right, cluster.bounds.right) - max(sep.bounds.left, cluster.bounds.left))
+                    vBetween && hOverlap >= 0.15f * min(sep.bounds.width, cluster.averageWidth)
+                }
+                if (hasSeparatorBetween) continue
 
                 val vGap = row.bounds.top - lastRow.bounds.bottom
                 val maxHeight = max(lastRow.bounds.height, row.bounds.height)
