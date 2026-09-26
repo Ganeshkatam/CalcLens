@@ -290,4 +290,24 @@ class SpatialExpressionReconstructorTest {
             assertTrue("Bounding box bottom should absorb separator: ${cand.boundingBox.bottom}", cand.boundingBox.bottom >= 0.50f)
         }
     }
+
+    @Test
+    fun testColumnWithSeparateOperatorLine() {
+        // Simulates ML Kit output where '+' is its own OCR line separate from '10':
+        // Line 1: '79'
+        // Line 2: '+'
+        // Line 3: '10'
+        val lines = listOf(
+            RawTextLine("79", "79", RectBounds(0.40f, 0.20f, 0.55f, 0.25f), 0.95f),
+            RawTextLine("+", "+", RectBounds(0.35f, 0.27f, 0.39f, 0.31f), 0.88f),
+            RawTextLine("10", "10", RectBounds(0.41f, 0.27f, 0.55f, 0.31f), 0.94f)
+        )
+
+        val candidates = SpatialExpressionReconstructor.reconstruct(lines) { "test-split" }
+        assertEquals(1, candidates.size)
+        assertEquals("79 + 10", candidates[0].normalizedText)
+
+        val res = MathEngine.evaluate(candidates[0].normalizedText) as MathResult.Success
+        assertEquals("89", res.formatted)
+    }
 }

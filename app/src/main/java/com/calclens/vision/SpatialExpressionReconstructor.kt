@@ -49,6 +49,11 @@ object SpatialExpressionReconstructor {
         return cleaned.toDoubleOrNull() != null
     }
 
+    fun isSingleOperator(text: String): Boolean {
+        val trimmed = stripProblemNumber(text).trim()
+        return trimmed.length == 1 && trimmed.first() in "+-*/"
+    }
+
     fun extractOperatorAndNumber(text: String): Pair<Char, String>? {
         val cleaned = stripProblemNumber(text).trim()
         if (cleaned.length < 2) return null
@@ -91,15 +96,52 @@ object SpatialExpressionReconstructor {
         }
 
         // 2. Second pass: Vertical / Column arithmetic reconstruction
-        // Look for bottom lines with operator + number (e.g. "+ 7", "+ 87", "- 25", "* 27", "+ 8.6")
+        // Handles both fused bottom lines ("+ 87") and split bottom lines ("+" adjacent to "87")
         for (bIdx in lines.indices) {
             if (consumedLineIndices.contains(bIdx)) continue
 
             val bottomLine = lines[bIdx]
-            val opAndNum = extractOperatorAndNumber(bottomLine.normalizedText) ?: continue
-            val (operator, bottomNumber) = opAndNum
+            var operator: Char? = null
+            var bottomNumber: String? = null
+            var bottomBox = bottomLine.bounds
+            var bottomConfidence = bottomLine.confidence
+            var partnerNumIdx: Int? = null
 
-            val bottomBox = bottomLine.bounds
+            val directOpAndNum = extractOperatorAndNumber(bottomLine.normalizedText)
+            if (directOpAndNum != null) {
+                operator = directOpAndNum.first
+                bottomNumber = directOpAndNum.second
+            } else if (isSingleOperator(bottomLine.normalizedText)) {
+                // Operator is on its own separate line; search horizontally for the adjacent operand
+                val opChar = bottomLine.normalizedText.trim().first()
+                for (nIdx in lines.indices) {
+                    if (nIdx == bIdx || consumedLineIndices.contains(nIdx)) continue
+                    val nLine = lines[nIdx]
+                    if (isPureNumber(nLine.normalizedText)) {
+                        val nBox = nLine.bounds
+                        val vCenterDiff = abs(nBox.centerY - bottomBox.centerY)
+                        if (vCenterDiff <= max(bottomBox.height, nBox.height) * 0.75f) {
+                            val hGap = nBox.left - bottomBox.right
+                            if (hGap >= -0.05f && hGap <= 0.20f) {
+                                operator = opChar
+                                bottomNumber = stripProblemNumber(nLine.normalizedText).trim()
+                                bottomBox = RectBounds(
+                                    bottomBox.left,
+                                    min(bottomBox.top, nBox.top),
+                                    nBox.right,
+                                    max(bottomBox.bottom, nBox.bottom)
+                                )
+                                bottomConfidence = min(bottomLine.confidence, nLine.confidence)
+                                partnerNumIdx = nIdx
+                                break
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (operator == null || bottomNumber == null) continue
+
             val bottomHeight = max(0.01f, bottomBox.height)
             val bottomWidth = max(0.01f, bottomBox.width)
 
@@ -107,7 +149,7 @@ object SpatialExpressionReconstructor {
             var bestDistance = Float.MAX_VALUE
 
             for (tIdx in lines.indices) {
-                if (tIdx == bIdx || consumedLineIndices.contains(tIdx)) continue
+                if (tIdx == bIdx || tIdx == partnerNumIdx || consumedLineIndices.contains(tIdx)) continue
 
                 val topLine = lines[tIdx]
                 if (!isPureNumber(topLine.normalizedText)) continue
@@ -142,7 +184,7 @@ object SpatialExpressionReconstructor {
                 val topLine = lines[bestTopIdx]
                 val topNumber = stripProblemNumber(topLine.normalizedText).trim()
                 val combinedText = "$topNumber $operator $bottomNumber"
-                val combinedConfidence = min(topLine.confidence, bottomLine.confidence)
+                val combinedConfidence = min(topLine.confidence, bottomConfidence)
 
                 if (combinedConfidence >= minConfidence) {
                     var boundLeft = min(topLine.bounds.left, bottomLine.bounds.left)
@@ -184,6 +226,7 @@ object SpatialExpressionReconstructor {
 
                     consumedLineIndices.add(bIdx)
                     consumedLineIndices.add(bestTopIdx)
+                    partnerNumIdx?.let { consumedLineIndices.add(it) }
                 }
             }
         }
