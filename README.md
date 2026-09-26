@@ -47,46 +47,53 @@ Overlay Renderer (Real-time Spatial Result Projection)
 
 ---
 
+## Technology Stack
+
+| Layer | Choice |
+| :--- | :--- |
+| **Platform** | Native Android (Min SDK 26, Target SDK 34) |
+| **Language** | Kotlin 1.9+ |
+| **UI Framework** | Jetpack Compose (Material 3) |
+| **Camera Feed** | AndroidX CameraX (Preview + ImageAnalysis) |
+| **Vision / OCR** | Google ML Kit Text Recognition (On-Device) |
+| **Math Engine** | Pure Kotlin Deterministic Lexer, Parser & Evaluator |
+| **Tracking** | Spatial IoU Correlation + Adaptive EMA Jitter Smoothing |
+| **Build Tooling** | Gradle 8.7 (Kotlin DSL) |
+
+---
+
 ## Repository Structure
 
 ```text
 CalcLens/
 ├── README.md
-├── docs/
-│   ├── product/
-│   │   ├── vision.md            # Product thesis, core interaction, and privacy
-│   │   ├── requirements.md      # Functional, non-functional, and boundary requirements
-│   │   ├── user-flows.md        # State machines, user journeys, and edge cases
-│   │   └── roadmap.md           # Milestones M0 through M10 and multi-version roadmap
-│   ├── architecture/
-│   │   ├── system-architecture.md
-│   │   ├── vision-pipeline.md
-│   │   ├── math-engine.md
-│   │   ├── tracking.md
-│   │   └── rendering.md
-│   ├── ux/
-│   │   ├── screens.md
-│   │   ├── states.md
-│   │   └── interactions.md
-│   └── engineering/
-│       ├── performance.md
-│       ├── security.md
-│       ├── testing.md
-│       └── release.md
-├── app/                         # Application shells and platform entry points
-├── src/
-│   ├── camera/                  # Frame capture, device orientation, and stream control
-│   ├── vision/                  # Region detection, OCR, and expression normalization
-│   ├── math/                    # Lexer, recursive-descent parser, AST, and evaluator
-│   ├── tracking/                # Temporal stabilization and spatial coordinate tracking
-│   ├── overlay/                 # Canvas/GPU rendering and projection logic
-│   └── state/                   # Recognition state machine and detection lifecycle
-├── tests/
-│   ├── math/                    # Unit tests for arithmetic evaluation
-│   ├── parser/                  # Syntax trees, operator precedence, and invalid grammar
-│   ├── vision/                  # Normalization, tokenization, and synthetic test frames
-│   └── tracking/                # Coordinate projection, stability, and decay metrics
-└── assets/                      # Test fixtures, benchmarks, and static resources
+├── build.gradle.kts             # Root Gradle build configuration
+├── settings.gradle.kts          # Module and repository definitions
+├── gradle.properties            # JVM parameters and AndroidX flags
+├── gradlew / gradlew.bat        # Gradle wrappers for Linux/macOS and Windows
+├── docs/                        # Complete Phase M0 specification suite
+│   ├── product/                 # Vision, requirements, user flows, and roadmap
+│   ├── architecture/            # System architecture, vision, math, tracking, rendering
+│   ├── ux/                      # Screens, states, and touch interactions
+│   └── engineering/             # Performance, security, testing, and release criteria
+└── app/                         # Native Android Application Module
+    ├── build.gradle.kts         # CameraX, ML Kit, and Jetpack Compose dependencies
+    ├── proguard-rules.pro
+    └── src/
+        ├── main/
+        │   ├── AndroidManifest.xml
+        │   ├── java/com/calclens/
+        │   │   ├── MainActivity.kt
+        │   │   ├── camera/      # CameraManager, FrameScheduler
+        │   │   ├── vision/      # TextRecognitionAnalyzer, ExpressionNormalizer, MathRegionFilter
+        │   │   ├── math/        # Token, ASTNode, MathLexer, MathParser, MathEvaluator, MathEngine
+        │   │   ├── tracking/    # TrackedEquation, SpatialTracker
+        │   │   ├── overlay/     # CoordinateTransformer, CollisionAvoidance, BadgeLayout
+        │   │   └── ui/          # CalcLensScreen, Theme, Color
+        │   └── res/values/      # Strings, colors
+        └── test/java/com/calclens/math/
+            ├── MathEngineTest.kt
+            └── ExpressionNormalizerTest.kt
 ```
 
 ---

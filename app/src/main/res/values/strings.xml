@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">CalcLens</string>
+    <string name="camera_permission_required">Camera permission is required to recognize and calculate arithmetic.</string>
+    <string name="grant_permission">Grant Camera Permission</string>
+</resources>

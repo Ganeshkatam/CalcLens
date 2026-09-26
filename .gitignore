@@ -1,12 +1,17 @@
-# Node
-node_modules/
-
-# Expo
-.expo/
-
-# OS
+# Android & Gradle
+*.iml
+.gradle
+/local.properties
+/.idea/
 .DS_Store
+/build
+/captures
+.externalNativeBuild
+.cxx
+*.apk
+output.json
 
-# Environment
+# OS & Environment
 .env
 .env.*
+Thumbs.db
