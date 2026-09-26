@@ -160,13 +160,14 @@ class SpatialTracker(
             }
         }
 
-        // Handle unmatched entities (temporary occlusion / camera motion)
+        // Handle unmatched entities (temporary occlusion / distance changes / camera motion)
         val iterator = entities.iterator()
         while (iterator.hasNext()) {
             val (id, entity) = iterator.next()
             if (!matchedIds.contains(id)) {
                 val timeSinceSeen = currentTime - entity.lastSeen
-                if (timeSinceSeen > gracePeriodMs) {
+                val effectiveGrace = if (entity.status == TrackingStatus.DISPLAYING) 1500L else gracePeriodMs
+                if (timeSinceSeen > effectiveGrace) {
                     iterator.remove()
                 } else {
                     // Maintain last known position with slight velocity extrapolation

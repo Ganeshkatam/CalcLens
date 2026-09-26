@@ -53,7 +53,7 @@ fun CalcLensScreen() {
     }
 
     val analyzer = remember {
-        TextRecognitionAnalyzer { candidates, imgW, imgH ->
+        TextRecognitionAnalyzer { candidates, imgW, imgH, hasTooFarText ->
             if (!currentPaused) {
                 transformer.sensorWidth = imgW.toFloat()
                 transformer.sensorHeight = imgH.toFloat()
@@ -62,6 +62,7 @@ fun CalcLensScreen() {
                     entities.any { it.status == TrackingStatus.DISPLAYING } -> "SOLVED"
                     entities.any { it.status == TrackingStatus.TRACKING } -> "TRACKING"
                     entities.any { it.status == TrackingStatus.DETECTED } -> "RECOGNIZING"
+                    hasTooFarText -> "TOO_FAR"
                     else -> "SEARCHING"
                 }
             }
@@ -119,12 +120,14 @@ fun CalcLensScreen() {
                     isPaused -> Color(0xFF94A3B8)
                     globalStatus == "SOLVED" || globalStatus == "TRACKING" -> AccentGreen
                     globalStatus == "RECOGNIZING" -> AccentBlue
+                    globalStatus == "TOO_FAR" -> Color(0xFFF59E0B)
                     else -> Color(0xFFEAB308)
                 }
                 val statusLabel = when {
                     isPaused -> "Paused"
                     globalStatus == "SOLVED" || globalStatus == "TRACKING" -> "Live"
                     globalStatus == "RECOGNIZING" -> "Reading..."
+                    globalStatus == "TOO_FAR" -> "Move closer"
                     else -> "Point at math"
                 }
 

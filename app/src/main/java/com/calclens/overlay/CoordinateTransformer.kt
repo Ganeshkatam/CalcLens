@@ -33,28 +33,28 @@ class CoordinateTransformer(
     fun computeBadgePlacement(
         expressionRect: RectBounds,
         textLength: Int = 2,
-        badgeHeight: Float = 56f,
         margin: Float = 14f
     ): RectBounds {
-        // Dynamically size badge to comfortably fit the answer without encroaching on adjacent columns
-        val charWidth = 22f
-        val horizontalPadding = 48f
+        // Dynamically scale badge height based on expression scale on screen
+        val scaledHeight = (expressionRect.height * 0.40f).coerceIn(40f, 58f)
+        val charWidth = scaledHeight * 0.42f
+        val horizontalPadding = scaledHeight * 0.90f
         val desiredWidth = textLength * charWidth + horizontalPadding
-        val maxAllowedWidth = max(expressionRect.width * 1.20f, 160f)
-        val badgeWidth = desiredWidth.coerceIn(90f, maxAllowedWidth)
+        val maxAllowedWidth = max(expressionRect.width * 1.25f, 160f)
+        val badgeWidth = desiredWidth.coerceIn(80f, maxAllowedWidth)
 
         // Anchor strictly to expression's horizontal center and bottom baseline
         var top = expressionRect.bottom + margin
         var left = expressionRect.centerX - badgeWidth / 2f
 
         // Flip above if clipping viewport bottom
-        if (top + badgeHeight > viewportHeight - 60f) {
-            top = max(40f, expressionRect.top - badgeHeight - margin)
+        if (top + scaledHeight > viewportHeight - 60f) {
+            top = max(40f, expressionRect.top - scaledHeight - margin)
         }
 
         // Clamp horizontally to screen viewport
         left = max(16f, min(viewportWidth - badgeWidth - 16f, left))
 
-        return RectBounds(left, top, left + badgeWidth, top + badgeHeight)
+        return RectBounds(left, top, left + badgeWidth, top + scaledHeight)
     }
 }

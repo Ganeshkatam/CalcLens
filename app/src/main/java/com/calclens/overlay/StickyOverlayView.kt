@@ -143,7 +143,9 @@ class StickyOverlayView(
                 border
             )
 
-            // 3. Draw result text vertically centered in badge
+            // 3. Draw result text vertically centered in badge with dynamic scale
+            val dynamicTextSize = (badgeBounds.height * 0.65f).coerceIn(24f, 44f)
+            textPaint.textSize = dynamicTextSize
             textPaint.getTextBounds(textToDisplay, 0, textToDisplay.length, textBounds)
             val textY = badgeBounds.centerY + (textBounds.height() * 0.35f)
             canvas.drawText(textToDisplay, badgeBounds.centerX, textY, textPaint)

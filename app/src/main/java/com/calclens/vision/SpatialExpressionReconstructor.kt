@@ -26,7 +26,13 @@ data class RawTextLine(
     val rawText: String,
     val normalizedText: String,
     val bounds: RectBounds,
-    val confidence: Float
+    val confidence: Float,
+    val pixelHeight: Float = 0f
+)
+
+data class ReconstructionResult(
+    val candidates: List<VisionCandidate>,
+    val hasTooFarText: Boolean = false
 )
 
 private data class ColumnRow(
@@ -46,6 +52,10 @@ private data class ColumnCluster(
 }
 
 object SpatialExpressionReconstructor {
+
+    // Thresholds for character resolution operating envelope
+    const val MIN_LINE_PIXEL_HEIGHT = 16f
+    const val MIN_LINE_NORMALIZED_HEIGHT = 0.012f
 
     // Matches standalone problem labels like "(i)", "(iv)", "(a)", "1.", "1)", "(12)", "[3]"
     private val standaloneProblemLabelRegex = Regex(
@@ -96,13 +106,40 @@ object SpatialExpressionReconstructor {
         return Pair(firstChar, remainder)
     }
 
+    fun isLineTooSmall(line: RawTextLine): Boolean {
+        if (line.pixelHeight > 0f && line.pixelHeight < MIN_LINE_PIXEL_HEIGHT) return true
+        if (line.pixelHeight <= 0f && line.bounds.height < MIN_LINE_NORMALIZED_HEIGHT) return true
+        return false
+    }
+
+    fun isClippedByScreenEdge(bounds: RectBounds): Boolean {
+        return bounds.left <= 0.005f || bounds.top <= 0.005f || bounds.right >= 0.995f || bounds.bottom >= 0.995f
+    }
+
     fun reconstruct(
         lines: List<RawTextLine>,
         minConfidence: Float = 0.60f,
         idGenerator: () -> String
     ): List<VisionCandidate> {
+        return reconstructWithDiagnostics(lines, minConfidence, idGenerator).candidates
+    }
+
+    fun reconstructWithDiagnostics(
+        lines: List<RawTextLine>,
+        minConfidence: Float = 0.60f,
+        idGenerator: () -> String
+    ): ReconstructionResult {
         val candidates = mutableListOf<VisionCandidate>()
         val consumedLineIndices = mutableSetOf<Int>()
+        var hasTooFarText = false
+
+        // Check if any arithmetic-like text is present but too small to be read reliably
+        for (line in lines) {
+            val hasDigits = line.rawText.any { it.isDigit() }
+            if (hasDigits && isLineTooSmall(line)) {
+                hasTooFarText = true
+            }
+        }
 
         // 1. First pass: Identify complete horizontal single-line expressions
         for (i in lines.indices) {
@@ -111,6 +148,9 @@ object SpatialExpressionReconstructor {
                 continue
             }
             if (isProblemLabel(line.rawText) || isProblemLabel(line.normalizedText)) {
+                continue
+            }
+            if (isLineTooSmall(line) || isClippedByScreenEdge(line.bounds)) {
                 continue
             }
 
@@ -138,6 +178,7 @@ object SpatialExpressionReconstructor {
             if (consumedLineIndices.contains(opIdx) || usedInRows.contains(opIdx)) continue
             val opLine = lines[opIdx]
             if (isProblemLabel(opLine.rawText) || isSeparatorLine(opLine.rawText)) continue
+            if (isLineTooSmall(opLine)) continue
 
             val opChar = when {
                 isSingleOperator(opLine.normalizedText) -> opLine.normalizedText.trim().first()
@@ -151,6 +192,7 @@ object SpatialExpressionReconstructor {
                 if (numIdx == opIdx || consumedLineIndices.contains(numIdx) || usedInRows.contains(numIdx)) continue
                 val numLine = lines[numIdx]
                 if (isProblemLabel(numLine.rawText) || isSeparatorLine(numLine.rawText)) continue
+                if (isLineTooSmall(numLine)) continue
                 if (!isPureNumber(numLine.normalizedText)) continue
 
                 val vCenterDiff = abs(numLine.bounds.centerY - opLine.bounds.centerY)
@@ -191,6 +233,7 @@ object SpatialExpressionReconstructor {
             if (consumedLineIndices.contains(idx) || usedInRows.contains(idx)) continue
             val line = lines[idx]
             if (isProblemLabel(line.rawText) || isSeparatorLine(line.rawText)) continue
+            if (isLineTooSmall(line)) continue
 
             val opAndNum = extractOperatorAndNumber(line.normalizedText)
                 ?: extractOperatorAndNumber(line.rawText)
@@ -213,6 +256,7 @@ object SpatialExpressionReconstructor {
             if (consumedLineIndices.contains(idx) || usedInRows.contains(idx)) continue
             val line = lines[idx]
             if (isProblemLabel(line.rawText) || isSeparatorLine(line.rawText)) continue
+            if (isLineTooSmall(line)) continue
 
             if (isPureNumber(line.normalizedText)) {
                 val numStr = stripProblemNumber(line.normalizedText).trim()
@@ -241,15 +285,12 @@ object SpatialExpressionReconstructor {
             for (cluster in clusters) {
                 val lastRow = cluster.rows.last()
 
-                // Must be below the last row in the cluster
                 if (row.bounds.top < lastRow.bounds.top) continue
 
                 val vGap = row.bounds.top - lastRow.bounds.bottom
                 val maxHeight = max(lastRow.bounds.height, row.bounds.height)
-                // Adjacent vertical spacing: within standard line height spacing (-0.35 to 1.6x line height)
                 if (vGap < -0.35f * maxHeight || vGap > 1.6f * maxHeight) continue
 
-                // Horizontal alignment check
                 val overlapLeft = max(row.bounds.left, cluster.bounds.left)
                 val overlapRight = min(row.bounds.right, cluster.bounds.right)
                 val overlapWidth = max(0f, overlapRight - overlapLeft)
@@ -285,14 +326,11 @@ object SpatialExpressionReconstructor {
 
         // 2f. Process each cluster into a full mathematical candidate
         for (cluster in clusters) {
-            // Require at least 2 rows in column arithmetic (e.g. 12 and + 15, or 12, + 15, + 13)
             if (cluster.rows.size < 2) continue
 
-            // Must contain at least one explicit arithmetic operator
             val explicitOps = cluster.rows.mapNotNull { it.operator }
             if (explicitOps.isEmpty()) continue
 
-            // Check for printed separator line underneath the last row
             val lastRow = cluster.rows.last()
             val bottomBox = lastRow.bounds
             val bottomHeight = max(0.01f, bottomBox.height)
@@ -318,7 +356,6 @@ object SpatialExpressionReconstructor {
                 }
             }
 
-            // Construct expression string
             val topNumber = cluster.rows.first().number
             val sb = StringBuilder(topNumber)
             val fallbackOp = explicitOps.first()
@@ -335,10 +372,8 @@ object SpatialExpressionReconstructor {
             if (clusterConfidence < minConfidence) continue
             if (!MathRegionFilter.isViableArithmetic(expressionText, confidence = clusterConfidence, minConfidence = minConfidence)) continue
 
-            // Verify with math engine
             if (MathEngine.evaluate(expressionText) is MathResult.SyntaxError) continue
 
-            // Compute unified spatial bounding box including separator line
             var boundLeft = cluster.bounds.left
             var boundTop = cluster.bounds.top
             var boundRight = cluster.bounds.right
@@ -352,6 +387,10 @@ object SpatialExpressionReconstructor {
             }
 
             val unionBox = RectBounds(boundLeft, boundTop, boundRight, boundBottom)
+
+            // Reject expressions cropped by the sensor image boundary to prevent incomplete arithmetic
+            if (isClippedByScreenEdge(unionBox)) continue
+
             val rawText = cluster.rows.joinToString("\n") { row ->
                 if (row.operator != null) "${row.operator} ${row.number}" else row.number
             }
@@ -366,12 +405,11 @@ object SpatialExpressionReconstructor {
                 )
             )
 
-            // Mark lines consumed
             for (row in cluster.rows) {
                 consumedLineIndices.addAll(row.sourceLineIndices)
             }
         }
 
-        return candidates
+        return ReconstructionResult(candidates, hasTooFarText)
     }
 }

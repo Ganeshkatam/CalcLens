@@ -13,7 +13,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 
 class TextRecognitionAnalyzer(
-    private val onCandidatesDetected: (candidates: List<VisionCandidate>, imageWidth: Int, imageHeight: Int) -> Unit
+    private val onCandidatesDetected: (candidates: List<VisionCandidate>, imageWidth: Int, imageHeight: Int, hasTooFarText: Boolean) -> Unit
 ) : ImageAnalysis.Analyzer {
 
     private val recognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
@@ -44,41 +44,43 @@ class TextRecognitionAnalyzer(
                         val rawText = line.text
                         val normalized = ExpressionNormalizer.normalize(rawText)
                         val box = line.boundingBox
+                        val pixelHeight = box?.height()?.toFloat() ?: 0f
                         val normalizedBox = if (box != null) {
                             normalizeBoundingBox(box, imageWidth, imageHeight)
                         } else {
                             RectBounds(0.2f, 0.4f, 0.8f, 0.5f)
                         }
 
-                        android.util.Log.d("CalcLens", "OCR Line: '$rawText' -> Normalized: '$normalized' (confidence=${line.confidence})")
+                        android.util.Log.d("CalcLens", "OCR Line: '$rawText' -> Normalized: '$normalized' (confidence=${line.confidence}, pxHeight=$pixelHeight)")
 
                         rawLines.add(
                             RawTextLine(
                                 rawText = rawText,
                                 normalizedText = normalized,
                                 bounds = normalizedBox,
-                                confidence = line.confidence
+                                confidence = line.confidence,
+                                pixelHeight = pixelHeight
                             )
                         )
                     }
                 }
 
-                val candidates = SpatialExpressionReconstructor.reconstruct(rawLines) {
+                val reconResult = SpatialExpressionReconstructor.reconstructWithDiagnostics(rawLines) {
                     "cand-${idCounter.incrementAndGet()}"
                 }
 
-                for (candidate in candidates) {
+                for (candidate in reconResult.candidates) {
                     android.util.Log.d("CalcLens", "Candidate Accepted: '${candidate.normalizedText}' at ${candidate.boundingBox}")
                 }
 
-                if (candidates.isNotEmpty()) {
-                    android.util.Log.d("CalcLens", "Total viable candidates in frame: ${candidates.size}")
+                if (reconResult.candidates.isNotEmpty()) {
+                    android.util.Log.d("CalcLens", "Total viable candidates in frame: ${reconResult.candidates.size}")
                 }
-                onCandidatesDetected(candidates, imageWidth, imageHeight)
+                onCandidatesDetected(reconResult.candidates, imageWidth, imageHeight, reconResult.hasTooFarText)
             }
             .addOnFailureListener {
                 // Fail visibly without crashing
-                onCandidatesDetected(emptyList(), imageWidth, imageHeight)
+                onCandidatesDetected(emptyList(), imageWidth, imageHeight, false)
             }
             .addOnCompleteListener {
                 isBusy.set(false)

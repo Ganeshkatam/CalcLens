@@ -385,13 +385,64 @@ class SpatialExpressionReconstructorTest {
 
     @Test
     fun testIncompleteFragmentRejected() {
-        // Dangling operator or cut off fragment should produce zero candidates
         val lines = listOf(
             RawTextLine("(iv)", "(iv)", RectBounds(0.70f, 0.70f, 0.85f, 0.75f), 0.90f),
             RawTextLine("+", "+", RectBounds(0.75f, 0.80f, 0.80f, 0.85f), 0.85f)
         )
-
         val candidates = SpatialExpressionReconstructor.reconstruct(lines) { "test-frag" }
         assertEquals(0, candidates.size)
+    }
+
+    @Test
+    fun testTextTooFarFlaggedAndRejected() {
+        // Characters are too small (pixelHeight = 10f, below 16px threshold)
+        val lines = listOf(
+            RawTextLine(
+                rawText = "60 + 26",
+                normalizedText = "60 + 26",
+                bounds = RectBounds(0.40f, 0.45f, 0.60f, 0.46f),
+                confidence = 0.90f,
+                pixelHeight = 10f
+            )
+        )
+
+        val result = SpatialExpressionReconstructor.reconstructWithDiagnostics(lines) { "test-too-far" }
+        assertTrue("Should detect math text that is too far/small", result.hasTooFarText)
+        assertEquals(0, result.candidates.size)
+    }
+
+    @Test
+    fun testOperatingRangeAdequateResolutionAccepted() {
+        // Characters have sufficient resolution (pixelHeight = 36f >= 16px)
+        val lines = listOf(
+            RawTextLine(
+                rawText = "60 + 26",
+                normalizedText = "60 + 26",
+                bounds = RectBounds(0.30f, 0.40f, 0.70f, 0.46f),
+                confidence = 0.95f,
+                pixelHeight = 36f
+            )
+        )
+
+        val result = SpatialExpressionReconstructor.reconstructWithDiagnostics(lines) { "test-adequate" }
+        assertEquals(1, result.candidates.size)
+        assertEquals("60 + 26", result.candidates[0].normalizedText)
+    }
+
+    @Test
+    fun testCroppedBorderExpressionRejected() {
+        // Line clipped by the top edge of the camera sensor (top = 0.002f <= 0.005f)
+        val lines = listOf(
+            RawTextLine(
+                rawText = "27 × 14",
+                normalizedText = "27 * 14",
+                bounds = RectBounds(0.20f, 0.002f, 0.80f, 0.04f),
+                confidence = 0.95f,
+                pixelHeight = 30f
+            )
+        )
+
+        val result = SpatialExpressionReconstructor.reconstructWithDiagnostics(lines) { "test-cropped" }
+        assertEquals(0, result.candidates.size)
     }
 }
