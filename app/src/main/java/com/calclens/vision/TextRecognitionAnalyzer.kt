@@ -13,7 +13,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 
 class TextRecognitionAnalyzer(
-    private val onCandidatesDetected: (List<VisionCandidate>) -> Unit
+    private val onCandidatesDetected: (candidates: List<VisionCandidate>, imageWidth: Int, imageHeight: Int) -> Unit
 ) : ImageAnalysis.Analyzer {
 
     private val recognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
@@ -74,11 +74,11 @@ class TextRecognitionAnalyzer(
                 if (candidates.isNotEmpty()) {
                     android.util.Log.d("CalcLens", "Total viable candidates in frame: ${candidates.size}")
                 }
-                onCandidatesDetected(candidates)
+                onCandidatesDetected(candidates, imageWidth, imageHeight)
             }
             .addOnFailureListener {
                 // Fail visibly without crashing
-                onCandidatesDetected(emptyList())
+                onCandidatesDetected(emptyList(), imageWidth, imageHeight)
             }
             .addOnCompleteListener {
                 isBusy.set(false)

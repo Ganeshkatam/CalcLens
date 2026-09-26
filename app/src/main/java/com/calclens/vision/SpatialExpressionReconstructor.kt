@@ -16,6 +16,7 @@ data class RectBounds(
     val centerX: Float get() = (left + right) * 0.5f
     val centerY: Float get() = (top + bottom) * 0.5f
 
+    fun offset(dx: Float, dy: Float): RectBounds = RectBounds(left + dx, top + dy, right + dx, bottom + dy)
     fun toRectF(): RectF = RectF(left, top, right, bottom)
 }
 
@@ -68,8 +69,8 @@ object SpatialExpressionReconstructor {
         // 1. First pass: Identify complete horizontal single-line expressions
         for (i in lines.indices) {
             val line = lines[i]
-            if (isSeparatorLine(line.normalizedText)) {
-                consumedLineIndices.add(i)
+            if (isSeparatorLine(line.normalizedText) || isSeparatorLine(line.rawText)) {
+                // Keep for vertical pass to absorb as separator line
                 continue
             }
 
@@ -80,7 +81,7 @@ object SpatialExpressionReconstructor {
                         id = idGenerator(),
                         rawText = line.rawText,
                         normalizedText = stripped,
-                        boundingBox = line.bounds.toRectF(),
+                        boundingBox = line.bounds,
                         confidence = line.confidence
                     )
                 )
@@ -116,7 +117,7 @@ object SpatialExpressionReconstructor {
                 if (topBox.top >= bottomBox.top) continue
 
                 val verticalGap = bottomBox.top - topBox.bottom
-                // Vertical gap check: accounts for spacing and optional separator line
+                // Vertical gap check: accounts for spacing between top operand and bottom operand
                 if (verticalGap < -0.35f * bottomHeight || verticalGap > 3.0f * bottomHeight) continue
 
                 val topWidth = max(0.01f, topBox.width)
@@ -143,12 +144,32 @@ object SpatialExpressionReconstructor {
                 val combinedConfidence = min(topLine.confidence, bottomLine.confidence)
 
                 if (combinedConfidence >= minConfidence) {
-                    val unionBox = RectF(
-                        min(topLine.bounds.left, bottomLine.bounds.left),
-                        topLine.bounds.top,
-                        max(topLine.bounds.right, bottomLine.bounds.right),
-                        bottomLine.bounds.bottom
-                    )
+                    var boundLeft = min(topLine.bounds.left, bottomLine.bounds.left)
+                    var boundTop = topLine.bounds.top
+                    var boundRight = max(topLine.bounds.right, bottomLine.bounds.right)
+                    var boundBottom = bottomLine.bounds.bottom
+
+                    // Check for a printed separator line (e.g. "----", "____") directly underneath bottomLine
+                    for (sIdx in lines.indices) {
+                        if (sIdx == bIdx || sIdx == bestTopIdx) continue
+                        val sLine = lines[sIdx]
+                        if (isSeparatorLine(sLine.rawText) || isSeparatorLine(sLine.normalizedText)) {
+                            val sBox = sLine.bounds
+                            val sepGap = sBox.top - bottomLine.bounds.bottom
+                            if (sepGap >= -0.25f * bottomHeight && sepGap <= 1.2f * bottomHeight) {
+                                val sCenterDist = abs(sBox.centerX - bottomBox.centerX)
+                                if (sCenterDist <= max(bottomWidth, sBox.width) * 0.85f) {
+                                    boundLeft = min(boundLeft, sBox.left)
+                                    boundRight = max(boundRight, sBox.right)
+                                    boundBottom = max(boundBottom, sBox.bottom)
+                                    consumedLineIndices.add(sIdx)
+                                    break
+                                }
+                            }
+                        }
+                    }
+
+                    val unionBox = RectBounds(boundLeft, boundTop, boundRight, boundBottom)
 
                     candidates.add(
                         VisionCandidate(

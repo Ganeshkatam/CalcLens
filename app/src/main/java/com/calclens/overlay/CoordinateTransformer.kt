@@ -1,6 +1,6 @@
 package com.calclens.overlay
 
-import android.graphics.RectF
+import com.calclens.vision.RectBounds
 import kotlin.math.max
 import kotlin.math.min
 
@@ -10,7 +10,7 @@ class CoordinateTransformer(
     var sensorWidth: Float = 1080f,
     var sensorHeight: Float = 1920f
 ) {
-    fun toScreenRect(normalizedBox: RectF): RectF {
+    fun toScreenRect(normalizedBox: RectBounds): RectBounds {
         val scale = max(
             viewportWidth / sensorWidth,
             viewportHeight / sensorHeight
@@ -27,26 +27,34 @@ class CoordinateTransformer(
         val right = normalizedBox.right * scaledWidth - offsetX
         val bottom = normalizedBox.bottom * scaledHeight - offsetY
 
-        return RectF(left, top, right, bottom)
+        return RectBounds(left, top, right, bottom)
     }
 
     fun computeBadgePlacement(
-        expressionRect: RectF,
-        badgeWidth: Float = 220f,
-        badgeHeight: Float = 90f,
-        margin: Float = 20f
-    ): RectF {
+        expressionRect: RectBounds,
+        textLength: Int = 2,
+        badgeHeight: Float = 56f,
+        margin: Float = 14f
+    ): RectBounds {
+        // Dynamically size badge to comfortably fit the answer without encroaching on adjacent columns
+        val charWidth = 22f
+        val horizontalPadding = 48f
+        val desiredWidth = textLength * charWidth + horizontalPadding
+        val maxAllowedWidth = max(expressionRect.width * 1.20f, 160f)
+        val badgeWidth = desiredWidth.coerceIn(90f, maxAllowedWidth)
+
+        // Anchor strictly to expression's horizontal center and bottom baseline
         var top = expressionRect.bottom + margin
-        var left = expressionRect.left + (expressionRect.width() - badgeWidth) / 2f
+        var left = expressionRect.centerX - badgeWidth / 2f
 
         // Flip above if clipping viewport bottom
         if (top + badgeHeight > viewportHeight - 60f) {
-            top = max(60f, expressionRect.top - badgeHeight - margin)
+            top = max(40f, expressionRect.top - badgeHeight - margin)
         }
 
-        // Clamp horizontally
-        left = max(24f, min(viewportWidth - badgeWidth - 24f, left))
+        // Clamp horizontally to screen viewport
+        left = max(16f, min(viewportWidth - badgeWidth - 16f, left))
 
-        return RectF(left, top, left + badgeWidth, top + badgeHeight)
+        return RectBounds(left, top, left + badgeWidth, top + badgeHeight)
     }
 }

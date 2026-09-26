@@ -65,7 +65,11 @@ fun CalcLensScreen() {
                     .filter { it.status != TrackingStatus.LOST || (System.currentTimeMillis() - it.lastSeen < 400L) }
                     .map { entity ->
                         val exprRect = transformer.toScreenRect(entity.smoothedBox)
-                        val badgeRect = transformer.computeBadgePlacement(exprRect)
+                        val textLength = (entity.result ?: entity.errorMessage ?: "..").length
+                        val badgeRect = transformer.computeBadgePlacement(
+                            expressionRect = exprRect,
+                            textLength = textLength
+                        )
                         BadgeLayout(
                             id = entity.id,
                             badgeRect = badgeRect,
@@ -89,8 +93,10 @@ fun CalcLensScreen() {
     }
 
     val analyzer = remember {
-        TextRecognitionAnalyzer { candidates ->
+        TextRecognitionAnalyzer { candidates, imgW, imgH ->
             if (!currentPaused) {
+                transformer.sensorWidth = imgW.toFloat()
+                transformer.sensorHeight = imgH.toFloat()
                 processCandidates(candidates)
             }
         }
@@ -111,6 +117,7 @@ fun CalcLensScreen() {
             modifier = Modifier.fillMaxSize(),
             factory = { ctx ->
                 PreviewView(ctx).apply {
+                    scaleType = PreviewView.ScaleType.FILL_CENTER
                     cameraManager.startCamera(lifecycleOwner, this, analyzer)
                 }
             }
@@ -120,20 +127,20 @@ fun CalcLensScreen() {
         for (layout in activeLayouts) {
             val leftDp = with(density) { layout.badgeRect.left.toDp() }
             val topDp = with(density) { layout.badgeRect.top.toDp() }
-            val widthDp = with(density) { layout.badgeRect.width().toDp() }
-            val heightDp = with(density) { layout.badgeRect.height().toDp() }
+            val widthDp = with(density) { layout.badgeRect.width.toDp() }
+            val heightDp = with(density) { layout.badgeRect.height.toDp() }
 
             val exprLeftDp = with(density) { layout.expressionRect.left.toDp() }
             val exprTopDp = with(density) { layout.expressionRect.top.toDp() }
-            val exprWidthDp = with(density) { layout.expressionRect.width().toDp() }
-            val exprHeightDp = with(density) { layout.expressionRect.height().toDp() }
+            val exprWidthDp = with(density) { layout.expressionRect.width.toDp() }
+            val exprHeightDp = with(density) { layout.expressionRect.height.toDp() }
 
             // Reticle around recognized physical text
             Box(
                 modifier = Modifier
                     .offset(x = exprLeftDp, y = exprTopDp)
                     .size(width = exprWidthDp, height = exprHeightDp)
-                    .border(1.dp, Color(0x6660A5FA), RoundedCornerShape(6.dp))
+                    .border(1.5.dp, Color(0x7760A5FA), RoundedCornerShape(6.dp))
             )
 
             // Anchored Answer Badge
@@ -142,16 +149,16 @@ fun CalcLensScreen() {
                 modifier = Modifier
                     .offset(x = leftDp, y = topDp)
                     .size(width = widthDp, height = heightDp)
-                    .clip(RoundedCornerShape(12.dp))
+                    .clip(RoundedCornerShape(8.dp))
                     .background(FrostedGlass)
-                    .border(1.5.dp, borderColor, RoundedCornerShape(12.dp)),
+                    .border(1.5.dp, borderColor, RoundedCornerShape(8.dp)),
                 contentAlignment = Alignment.Center
             ) {
                 if (layout.result != null) {
                     Text(
                         text = layout.result,
                         color = Color.White,
-                        fontSize = 20.sp,
+                        fontSize = 18.sp,
                         fontWeight = FontWeight.Bold,
                         fontFamily = FontFamily.Monospace
                     )

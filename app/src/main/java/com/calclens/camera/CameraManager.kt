@@ -18,6 +18,7 @@ class CameraManager(private val context: Context) {
     private var camera: Camera? = null
     private val cameraExecutor: ExecutorService = Executors.newSingleThreadExecutor()
 
+    @Suppress("DEPRECATION")
     fun startCamera(
         lifecycleOwner: LifecycleOwner,
         previewView: PreviewView,
@@ -29,12 +30,14 @@ class CameraManager(private val context: Context) {
             val cameraProvider = cameraProviderFuture.get()
 
             val preview = Preview.Builder()
+                .setTargetAspectRatio(androidx.camera.core.AspectRatio.RATIO_16_9)
                 .build()
                 .also {
                     it.setSurfaceProvider(previewView.surfaceProvider)
                 }
 
             val imageAnalysis = ImageAnalysis.Builder()
+                .setTargetAspectRatio(androidx.camera.core.AspectRatio.RATIO_16_9)
                 .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
                 .setOutputImageFormat(ImageAnalysis.OUTPUT_IMAGE_FORMAT_YUV_420_888)
                 .build()

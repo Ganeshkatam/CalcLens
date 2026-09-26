@@ -230,4 +230,64 @@ class SpatialExpressionReconstructorTest {
         val candidates = SpatialExpressionReconstructor.reconstruct(lines, minConfidence = 0.60f) { "test-1" }
         assertEquals(0, candidates.size)
     }
+
+    @Test
+    fun testWorksheetFourColumnsSubtractionWithSeparators() {
+        // Simulates the exact layout from the worksheet screenshot:
+        // Col 1: 45 / - 19 / ----
+        // Col 2: 65 / - 27 / ----
+        // Col 3: 74 / - 38 / ----
+        // Col 4: 41 / - 19 / ----
+        val lines = listOf(
+            // Column 1
+            RawTextLine("45", "45", RectBounds(0.12f, 0.40f, 0.22f, 0.44f), 0.95f),
+            RawTextLine("- 19", "- 19", RectBounds(0.10f, 0.45f, 0.22f, 0.49f), 0.94f),
+            RawTextLine("----", "----", RectBounds(0.10f, 0.50f, 0.24f, 0.51f), 0.90f),
+
+            // Column 2
+            RawTextLine("65", "65", RectBounds(0.35f, 0.40f, 0.45f, 0.44f), 0.95f),
+            RawTextLine("- 27", "- 27", RectBounds(0.33f, 0.45f, 0.45f, 0.49f), 0.93f),
+            RawTextLine("----", "----", RectBounds(0.33f, 0.50f, 0.47f, 0.51f), 0.91f),
+
+            // Column 3
+            RawTextLine("74", "74", RectBounds(0.58f, 0.40f, 0.68f, 0.44f), 0.96f),
+            RawTextLine("- 38", "- 38", RectBounds(0.56f, 0.45f, 0.68f, 0.49f), 0.95f),
+            RawTextLine("----", "----", RectBounds(0.56f, 0.50f, 0.70f, 0.51f), 0.92f),
+
+            // Column 4
+            RawTextLine("41", "41", RectBounds(0.80f, 0.40f, 0.90f, 0.44f), 0.94f),
+            RawTextLine("- 19", "- 19", RectBounds(0.78f, 0.45f, 0.90f, 0.49f), 0.93f),
+            RawTextLine("----", "----", RectBounds(0.78f, 0.50f, 0.92f, 0.51f), 0.90f)
+        )
+
+        var idCount = 0
+        val candidates = SpatialExpressionReconstructor.reconstruct(lines) { "col-${++idCount}" }
+
+        // Must reconstruct all 4 columns independently
+        assertEquals(4, candidates.size)
+
+        // Sorted by X-coordinate
+        val sorted = candidates.sortedBy { it.boundingBox.left }
+
+        assertEquals("45 - 19", sorted[0].normalizedText)
+        assertEquals("65 - 27", sorted[1].normalizedText)
+        assertEquals("74 - 38", sorted[2].normalizedText)
+        assertEquals("41 - 19", sorted[3].normalizedText)
+
+        // Evaluate deterministically
+        val res1 = MathEngine.evaluate(sorted[0].normalizedText) as MathResult.Success
+        val res2 = MathEngine.evaluate(sorted[1].normalizedText) as MathResult.Success
+        val res3 = MathEngine.evaluate(sorted[2].normalizedText) as MathResult.Success
+        val res4 = MathEngine.evaluate(sorted[3].normalizedText) as MathResult.Success
+
+        assertEquals("26", res1.formatted)
+        assertEquals("38", res2.formatted)
+        assertEquals("36", res3.formatted)
+        assertEquals("22", res4.formatted)
+
+        // Verify bounding boxes absorbed separator lines (bottom should reach separator line ~0.51f)
+        for (cand in sorted) {
+            assertTrue("Bounding box bottom should absorb separator: ${cand.boundingBox.bottom}", cand.boundingBox.bottom >= 0.50f)
+        }
+    }
 }

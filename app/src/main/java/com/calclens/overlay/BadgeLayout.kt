@@ -1,12 +1,12 @@
 package com.calclens.overlay
 
-import android.graphics.RectF
 import com.calclens.tracking.TrackingStatus
+import com.calclens.vision.RectBounds
 
 data class BadgeLayout(
     val id: String,
-    var badgeRect: RectF,
-    val expressionRect: RectF,
+    val badgeRect: RectBounds,
+    val expressionRect: RectBounds,
     val result: String?,
     val errorMessage: String?,
     val status: TrackingStatus,

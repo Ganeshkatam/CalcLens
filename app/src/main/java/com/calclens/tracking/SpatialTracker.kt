@@ -1,8 +1,8 @@
 package com.calclens.tracking
 
-import android.graphics.RectF
 import com.calclens.math.MathEngine
 import com.calclens.math.MathResult
+import com.calclens.vision.RectBounds
 import com.calclens.vision.VisionCandidate
 import kotlin.math.max
 import kotlin.math.min
@@ -27,17 +27,32 @@ class SpatialTracker(
 
         for (candidate in candidates) {
             var bestMatchId: String? = null
-            var highestIoU = 0f
+            var bestScore = 0f
 
             for ((id, entity) in entities) {
+                if (matchedIds.contains(id)) continue
+
                 val iou = calculateIoU(candidate.boundingBox, entity.boundingBox)
-                if (iou > highestIoU && iou >= iouThreshold) {
-                    highestIoU = iou
+                val textMatches = entity.normalizedText == candidate.normalizedText
+
+                val dx: Float = kotlin.math.abs(candidate.boundingBox.centerX - entity.boundingBox.centerX)
+                val dy: Float = kotlin.math.abs(candidate.boundingBox.centerY - entity.boundingBox.centerY)
+                val isSpatiallyClose = dx < 0.15f && dy < 0.12f
+
+                var score = 0f
+                if (textMatches && isSpatiallyClose) {
+                    score = 1.0f + iou + (0.15f - dx)
+                } else if (iou >= iouThreshold) {
+                    score = iou + (if (textMatches) 0.5f else 0.0f)
+                }
+
+                if (score > bestScore) {
+                    bestScore = score
                     bestMatchId = id
                 }
             }
 
-            if (bestMatchId != null && !matchedIds.contains(bestMatchId)) {
+            if (bestMatchId != null) {
                 matchedIds.add(bestMatchId)
                 val entity = entities[bestMatchId]!!
 
@@ -53,8 +68,8 @@ class SpatialTracker(
                 }
 
                 val dt = max(0.016f, (currentTime - entity.lastSeen) / 1000f)
-                entity.velocityX = (candidate.boundingBox.centerX() - entity.boundingBox.centerX()) / dt
-                entity.velocityY = (candidate.boundingBox.centerY() - entity.boundingBox.centerY()) / dt
+                entity.velocityX = (candidate.boundingBox.centerX - entity.boundingBox.centerX) / dt
+                entity.velocityY = (candidate.boundingBox.centerY - entity.boundingBox.centerY) / dt
 
                 entity.boundingBox = candidate.boundingBox
                 entity.confidence = candidate.confidence
@@ -63,7 +78,7 @@ class SpatialTracker(
                 val speed = sqrt(entity.velocityX * entity.velocityX + entity.velocityY * entity.velocityY)
                 val alpha = if (speed > 0.4f) smoothingAlphaDynamic else smoothingAlphaStationary
 
-                entity.smoothedBox = RectF(
+                entity.smoothedBox = RectBounds(
                     alpha * candidate.boundingBox.left + (1f - alpha) * entity.smoothedBox.left,
                     alpha * candidate.boundingBox.top + (1 - alpha) * entity.smoothedBox.top,
                     alpha * candidate.boundingBox.right + (1 - alpha) * entity.smoothedBox.right,
@@ -109,7 +124,7 @@ class SpatialTracker(
                     normalizedText = candidate.normalizedText,
                     confidence = candidate.confidence,
                     boundingBox = candidate.boundingBox,
-                    smoothedBox = RectF(candidate.boundingBox),
+                    smoothedBox = candidate.boundingBox,
                     firstSeen = currentTime,
                     lastSeen = currentTime,
                     consecutiveMatches = 1,
@@ -131,7 +146,7 @@ class SpatialTracker(
                 } else {
                     entity.status = TrackingStatus.LOST
                     val dt = 0.016f
-                    entity.smoothedBox.offset(entity.velocityX * dt * 0.5f, entity.velocityY * dt * 0.5f)
+                    entity.smoothedBox = entity.smoothedBox.offset(entity.velocityX * dt * 0.5f, entity.velocityY * dt * 0.5f)
                 }
             }
         }
@@ -144,7 +159,7 @@ class SpatialTracker(
     }
 
     companion object {
-        fun calculateIoU(boxA: RectF, boxB: RectF): Float {
+        fun calculateIoU(boxA: RectBounds, boxB: RectBounds): Float {
             val left = max(boxA.left, boxB.left)
             val top = max(boxA.top, boxB.top)
             val right = min(boxA.right, boxB.right)
@@ -154,8 +169,8 @@ class SpatialTracker(
             val interHeight = max(0f, bottom - top)
             val intersection = interWidth * interHeight
 
-            val areaA = boxA.width() * boxA.height()
-            val areaB = boxB.width() * boxB.height()
+            val areaA = boxA.width * boxA.height
+            val areaB = boxB.width * boxB.height
             val union = areaA + areaB - intersection
 
             if (union <= 0f) return 0f

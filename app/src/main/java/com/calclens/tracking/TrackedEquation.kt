@@ -1,6 +1,6 @@
 package com.calclens.tracking
 
-import android.graphics.RectF
+import com.calclens.vision.RectBounds
 
 enum class TrackingStatus {
     DETECTED,
@@ -16,8 +16,8 @@ data class TrackedEquation(
     var result: String? = null,
     var errorMessage: String? = null,
     var confidence: Float,
-    var boundingBox: RectF,
-    var smoothedBox: RectF,
+    var boundingBox: RectBounds,
+    var smoothedBox: RectBounds,
     var velocityX: Float = 0f,
     var velocityY: Float = 0f,
     val firstSeen: Long = System.currentTimeMillis(),
