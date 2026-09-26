@@ -29,8 +29,9 @@ data class RawTextLine(
 
 object SpatialExpressionReconstructor {
 
-    // Matches leading problem labels like "1. ", "11. ", "23) ", "(5) "
-    private val problemNumberRegex = Regex("^\\s*\\(?\\d{1,3}[.)]\\s+")
+    // Matches leading problem labels like "1. ", "11. ", "23) ", "(5) ", "8/ ", "1: "
+    // Decimal numbers like "3.75" are preserved because periods must be followed by whitespace.
+    private val problemNumberRegex = Regex("^\\s*(?:\\(?\\d{1,3}\\.\\s+|\\(?\\d{1,3}[)/:]\\s*)")
 
     fun stripProblemNumber(text: String): String {
         return text.replace(problemNumberRegex, "").trim()
