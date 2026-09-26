@@ -623,4 +623,63 @@ class SpatialExpressionReconstructorTest {
             assertTrue("Content bounds must be narrower than or equal to total box", matching.contentBounds.width <= matching.boundingBox.width)
         }
     }
+
+    @Test
+    fun testCoreSupportedOperatorsAndTrailingEquals() {
+        val lines = listOf(
+            RawTextLine("125 + 87", ExpressionNormalizer.normalize("125 + 87"), RectBounds(0.1f, 0.10f, 0.5f, 0.15f), 0.95f),
+            RawTextLine("48 x 27", ExpressionNormalizer.normalize("48 x 27"), RectBounds(0.1f, 0.20f, 0.5f, 0.25f), 0.95f),
+            RawTextLine("144 ÷ 12", ExpressionNormalizer.normalize("144 ÷ 12"), RectBounds(0.1f, 0.30f, 0.5f, 0.35f), 0.95f),
+            RawTextLine("48 × 27 =", ExpressionNormalizer.normalize("48 × 27 ="), RectBounds(0.1f, 0.40f, 0.5f, 0.45f), 0.95f),
+            RawTextLine("12 + 5 × 3", ExpressionNormalizer.normalize("12 + 5 × 3"), RectBounds(0.1f, 0.50f, 0.5f, 0.55f), 0.95f)
+        )
+
+        var id = 0
+        val candidates = SpatialExpressionReconstructor.reconstruct(lines) { "core-${++id}" }
+        assertEquals(5, candidates.size)
+
+        val byText = candidates.associateBy { it.normalizedText }
+
+        assertEquals("212", (MathEngine.evaluate(byText["125 + 87"]!!.normalizedText) as MathResult.Success).formatted)
+        assertEquals("1296", (MathEngine.evaluate(byText["48 * 27"]!!.normalizedText) as MathResult.Success).formatted)
+        assertEquals("12", (MathEngine.evaluate(byText["144 / 12"]!!.normalizedText) as MathResult.Success).formatted)
+        assertEquals("27", (MathEngine.evaluate(byText["12 + 5 * 3"]!!.normalizedText) as MathResult.Success).formatted)
+    }
+
+    @Test
+    fun testMultipleExpressionsInOneCameraView() {
+        // 12 + 5
+        // 48 × 3
+        // 100 / 4
+        val lines = listOf(
+            RawTextLine("12 + 5", ExpressionNormalizer.normalize("12 + 5"), RectBounds(0.1f, 0.10f, 0.4f, 0.14f), 0.95f),
+            RawTextLine("48 × 3", ExpressionNormalizer.normalize("48 × 3"), RectBounds(0.1f, 0.25f, 0.4f, 0.29f), 0.95f),
+            RawTextLine("100 / 4", ExpressionNormalizer.normalize("100 / 4"), RectBounds(0.1f, 0.40f, 0.4f, 0.44f), 0.95f)
+        )
+
+        var id = 0
+        val candidates = SpatialExpressionReconstructor.reconstruct(lines) { "multi-${++id}" }
+        assertEquals(3, candidates.size)
+
+        val sorted = candidates.sortedBy { it.boundingBox.top }
+        assertEquals("17", (MathEngine.evaluate(sorted[0].normalizedText) as MathResult.Success).formatted)
+        assertEquals("144", (MathEngine.evaluate(sorted[1].normalizedText) as MathResult.Success).formatted)
+        assertEquals("25", (MathEngine.evaluate(sorted[2].normalizedText) as MathResult.Success).formatted)
+    }
+
+    @Test
+    fun testNeverGuessCandidateRejection() {
+        // If an expression is corrupt or uncertain ("2? x 14"), SpatialExpressionReconstructor must NOT produce a candidate
+        val lines = listOf(
+            RawTextLine(
+                rawText = "2? x 14",
+                normalizedText = ExpressionNormalizer.normalize("2? x 14"),
+                bounds = RectBounds(0.1f, 0.1f, 0.4f, 0.15f),
+                confidence = 0.95f
+            )
+        )
+
+        val candidates = SpatialExpressionReconstructor.reconstruct(lines) { "uncertain-1" }
+        assertEquals("Uncertain expression '2? x 14' must not produce any candidate", 0, candidates.size)
+    }
 }

@@ -34,10 +34,7 @@ object ExpressionNormalizer {
             }
         }
 
-        // 3. Remove non-math characters
-        text = text.replace(Regex("[^0-9+\\-*/().\\s]"), "")
-
-        // 4. Collapse whitespace
+        // 3. Collapse whitespace
         text = text.replace(Regex("\\s+"), " ").trim()
 
         return text

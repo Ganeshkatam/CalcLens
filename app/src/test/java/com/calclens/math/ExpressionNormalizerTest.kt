@@ -39,4 +39,24 @@ class ExpressionNormalizerTest {
         assertFalse(MathRegionFilter.isViableArithmetic("+ 14", 0.95f))
         assertFalse(MathRegionFilter.isViableArithmetic("42", 0.95f))
     }
+
+    @Test
+    fun testNeverGuessUncertainExpressions() {
+        // Corrupt or uncertain OCR must preserve invalid tokens and be rejected by MathRegionFilter
+        val uncertain1 = ExpressionNormalizer.normalize("2? x 14")
+        assertFalse("Uncertain expression '2? x 14' must be rejected", MathRegionFilter.isViableArithmetic(uncertain1))
+
+        val uncertain2 = ExpressionNormalizer.normalize("2a + 3")
+        assertFalse("Alphanumeric noise '2a + 3' must be rejected", MathRegionFilter.isViableArithmetic(uncertain2))
+
+        val uncertain3 = ExpressionNormalizer.normalize("Chapter 8")
+        assertFalse("Heading text 'Chapter 8' must be rejected", MathRegionFilter.isViableArithmetic(uncertain3))
+
+        val uncertain4 = ExpressionNormalizer.normalize("12 + ?")
+        assertFalse("Trailing question mark '12 + ?' must be rejected", MathRegionFilter.isViableArithmetic(uncertain4))
+
+        val uncertain5 = ExpressionNormalizer.normalize("50% - 10")
+        assertFalse("Unsupported symbol '50% - 10' must be rejected", MathRegionFilter.isViableArithmetic(uncertain5))
+    }
 }
+

@@ -81,6 +81,11 @@ object SpatialExpressionReconstructor {
         return text.replace(problemNumberRegex, "").trim()
     }
 
+    fun cleanHorizontalExpression(text: String): String {
+        val stripped = stripProblemNumber(text)
+        return stripped.trimEnd('=', ' ').trim()
+    }
+
     fun isSeparatorLine(text: String): Boolean {
         val trimmed = text.trim()
         return trimmed.isNotEmpty() && trimmed.all { it in "-=_—–─━―~" }
@@ -164,7 +169,7 @@ object SpatialExpressionReconstructor {
                 continue
             }
 
-            val stripped = stripProblemNumber(line.normalizedText)
+            val stripped = cleanHorizontalExpression(line.normalizedText)
             if (MathRegionFilter.isViableArithmetic(stripped, confidence = line.confidence, minConfidence = minConfidence)) {
                 candidates.add(
                     VisionCandidate(
