@@ -44,7 +44,7 @@ class TextRecognitionAnalyzer(
                         val rawText = line.text
                         val normalized = ExpressionNormalizer.normalize(rawText)
 
-                        if (MathRegionFilter.isViableArithmetic(normalized, confidence = line.confidence ?: 0.9f)) {
+                        if (MathRegionFilter.isViableArithmetic(normalized, confidence = line.confidence)) {
                             val box = line.boundingBox
                             val normalizedBox = if (box != null) {
                                 normalizeBoundingBox(box, imageWidth, imageHeight)
@@ -58,7 +58,7 @@ class TextRecognitionAnalyzer(
                                     rawText = rawText,
                                     normalizedText = normalized,
                                     boundingBox = normalizedBox,
-                                    confidence = line.confidence ?: 0.9f
+                                    confidence = line.confidence
                                 )
                             )
                         }
