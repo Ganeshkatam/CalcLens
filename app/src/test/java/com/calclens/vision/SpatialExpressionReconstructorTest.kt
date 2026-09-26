@@ -310,4 +310,88 @@ class SpatialExpressionReconstructorTest {
         val res = MathEngine.evaluate(candidates[0].normalizedText) as MathResult.Success
         assertEquals("89", res.formatted)
     }
+
+    @Test
+    fun testThreeTermColumnAdditionWithProblemLabelAndSeparator() {
+        // Reproduces the exact user screenshot:
+        // (i)   12
+        //     + 15
+        //     + 13
+        //     ────
+        val lines = listOf(
+            RawTextLine("(i)", "(i)", RectBounds(0.08f, 0.18f, 0.18f, 0.24f), 0.92f),
+            RawTextLine("12", "12", RectBounds(0.38f, 0.18f, 0.66f, 0.25f), 0.96f),
+            RawTextLine("+ 15", "+ 15", RectBounds(0.34f, 0.27f, 0.66f, 0.34f), 0.95f),
+            RawTextLine("+ 13", "+ 13", RectBounds(0.34f, 0.36f, 0.66f, 0.43f), 0.94f),
+            RawTextLine("────", "----", RectBounds(0.32f, 0.45f, 0.73f, 0.47f), 0.90f)
+        )
+
+        val candidates = SpatialExpressionReconstructor.reconstruct(lines) { "test-3term" }
+
+        assertEquals(1, candidates.size)
+        assertEquals("12 + 15 + 13", candidates[0].normalizedText)
+
+        val res = MathEngine.evaluate(candidates[0].normalizedText) as MathResult.Success
+        assertEquals("40", res.formatted)
+
+        // Bounding box must cover all rows and the separator line
+        val bbox = candidates[0].boundingBox
+        assertTrue("Top should reach first operand (12): ${bbox.top}", bbox.top <= 0.18f)
+        assertTrue("Bottom should absorb separator line (────): ${bbox.bottom}", bbox.bottom >= 0.47f)
+    }
+
+    @Test
+    fun testArbitraryLengthColumnArithmetic() {
+        // 4 rows: 12 + 15 + 13 + 28 = 68
+        val lines = listOf(
+            RawTextLine("12", "12", RectBounds(0.40f, 0.10f, 0.60f, 0.15f), 0.95f),
+            RawTextLine("+ 15", "+ 15", RectBounds(0.38f, 0.17f, 0.60f, 0.22f), 0.95f),
+            RawTextLine("+ 13", "+ 13", RectBounds(0.38f, 0.24f, 0.60f, 0.29f), 0.95f),
+            RawTextLine("+ 28", "+ 28", RectBounds(0.38f, 0.31f, 0.60f, 0.36f), 0.95f),
+            RawTextLine("────", "----", RectBounds(0.35f, 0.38f, 0.63f, 0.40f), 0.90f)
+        )
+
+        val candidates = SpatialExpressionReconstructor.reconstruct(lines) { "test-4term" }
+
+        assertEquals(1, candidates.size)
+        assertEquals("12 + 15 + 13 + 28", candidates[0].normalizedText)
+
+        val res = MathEngine.evaluate(candidates[0].normalizedText) as MathResult.Success
+        assertEquals("68", res.formatted)
+    }
+
+    @Test
+    fun testColumnWithSingleBottomPlusSign() {
+        // Format where plus is only on the bottom line:
+        //   12
+        //   15
+        // + 13
+        // ────
+        val lines = listOf(
+            RawTextLine("12", "12", RectBounds(0.40f, 0.18f, 0.60f, 0.25f), 0.95f),
+            RawTextLine("15", "15", RectBounds(0.40f, 0.27f, 0.60f, 0.34f), 0.95f),
+            RawTextLine("+ 13", "+ 13", RectBounds(0.36f, 0.36f, 0.60f, 0.43f), 0.95f),
+            RawTextLine("────", "----", RectBounds(0.34f, 0.45f, 0.62f, 0.47f), 0.90f)
+        )
+
+        val candidates = SpatialExpressionReconstructor.reconstruct(lines) { "test-bottom-op" }
+
+        assertEquals(1, candidates.size)
+        assertEquals("12 + 15 + 13", candidates[0].normalizedText)
+
+        val res = MathEngine.evaluate(candidates[0].normalizedText) as MathResult.Success
+        assertEquals("40", res.formatted)
+    }
+
+    @Test
+    fun testIncompleteFragmentRejected() {
+        // Dangling operator or cut off fragment should produce zero candidates
+        val lines = listOf(
+            RawTextLine("(iv)", "(iv)", RectBounds(0.70f, 0.70f, 0.85f, 0.75f), 0.90f),
+            RawTextLine("+", "+", RectBounds(0.75f, 0.80f, 0.80f, 0.85f), 0.85f)
+        )
+
+        val candidates = SpatialExpressionReconstructor.reconstruct(lines) { "test-frag" }
+        assertEquals(0, candidates.size)
+    }
 }

@@ -1,6 +1,8 @@
 package com.calclens.vision
 
 import android.graphics.RectF
+import com.calclens.math.MathEngine
+import com.calclens.math.MathResult
 import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
@@ -27,11 +29,42 @@ data class RawTextLine(
     val confidence: Float
 )
 
+private data class ColumnRow(
+    val operator: Char?,
+    val number: String,
+    val bounds: RectBounds,
+    val confidence: Float,
+    val sourceLineIndices: List<Int>
+)
+
+private data class ColumnCluster(
+    val rows: MutableList<ColumnRow>,
+    var bounds: RectBounds
+) {
+    val centerX: Float get() = bounds.centerX
+    val averageWidth: Float get() = bounds.width
+}
+
 object SpatialExpressionReconstructor {
 
-    // Matches leading problem labels like "1. ", "11. ", "23) ", "(5) ", "8/ ", "1: "
-    // Decimal numbers like "3.75" are preserved because periods must be followed by whitespace.
-    private val problemNumberRegex = Regex("^\\s*(?:\\(?\\d{1,3}\\.\\s+|\\(?\\d{1,3}[)/:]\\s*)")
+    // Matches standalone problem labels like "(i)", "(iv)", "(a)", "1.", "1)", "(12)", "[3]"
+    private val standaloneProblemLabelRegex = Regex(
+        """^\s*(?:\([a-zA-Z0-9ivxLCDM]+\)|\[[a-zA-Z0-9ivxLCDM]+\]|[a-zA-Z0-9ivxLCDM]{1,4}[.)/:])\s*$""",
+        RegexOption.IGNORE_CASE
+    )
+
+    // Matches leading problem labels like "(i) ", "1. ", "23) ", "(5) ", "8/ ", "1: "
+    // Preserves decimals like "3.75" because periods must be followed by whitespace or parenthesis/colon.
+    private val problemNumberRegex = Regex(
+        """^\s*(?:\([a-zA-Z0-9ivxLCDM]+\)\s*|\[[a-zA-Z0-9ivxLCDM]+\]\s*|[a-zA-Z0-9ivxLCDM]{1,4}[.)/:]\s+)""",
+        RegexOption.IGNORE_CASE
+    )
+
+    fun isProblemLabel(text: String): Boolean {
+        val trimmed = text.trim()
+        if (trimmed.isEmpty()) return false
+        return standaloneProblemLabelRegex.matches(trimmed)
+    }
 
     fun stripProblemNumber(text: String): String {
         return text.replace(problemNumberRegex, "").trim()
@@ -45,7 +78,6 @@ object SpatialExpressionReconstructor {
     fun isPureNumber(text: String): Boolean {
         val cleaned = stripProblemNumber(text).trim()
         if (cleaned.isEmpty()) return false
-        // Allow integer or decimal number (e.g. "8", "125", "3.75")
         return cleaned.toDoubleOrNull() != null
     }
 
@@ -76,7 +108,9 @@ object SpatialExpressionReconstructor {
         for (i in lines.indices) {
             val line = lines[i]
             if (isSeparatorLine(line.normalizedText) || isSeparatorLine(line.rawText)) {
-                // Keep for vertical pass to absorb as separator line
+                continue
+            }
+            if (isProblemLabel(line.rawText) || isProblemLabel(line.normalizedText)) {
                 continue
             }
 
@@ -95,139 +129,246 @@ object SpatialExpressionReconstructor {
             }
         }
 
-        // 2. Second pass: Vertical / Column arithmetic reconstruction
-        // Handles both fused bottom lines ("+ 87") and split bottom lines ("+" adjacent to "87")
-        for (bIdx in lines.indices) {
-            if (consumedLineIndices.contains(bIdx)) continue
+        // 2. Second pass: Vertical / Column arithmetic clustering & reconstruction
+        val columnRows = mutableListOf<ColumnRow>()
+        val usedInRows = mutableSetOf<Int>()
 
-            val bottomLine = lines[bIdx]
-            var operator: Char? = null
-            var bottomNumber: String? = null
-            var bottomBox = bottomLine.bounds
-            var bottomConfidence = bottomLine.confidence
-            var partnerNumIdx: Int? = null
+        // 2a. Detect split operator and number on the same horizontal row (e.g. "+" on its own line next to "15")
+        for (opIdx in lines.indices) {
+            if (consumedLineIndices.contains(opIdx) || usedInRows.contains(opIdx)) continue
+            val opLine = lines[opIdx]
+            if (isProblemLabel(opLine.rawText) || isSeparatorLine(opLine.rawText)) continue
 
-            val directOpAndNum = extractOperatorAndNumber(bottomLine.normalizedText)
-            if (directOpAndNum != null) {
-                operator = directOpAndNum.first
-                bottomNumber = directOpAndNum.second
-            } else if (isSingleOperator(bottomLine.normalizedText)) {
-                // Operator is on its own separate line; search horizontally for the adjacent operand
-                val opChar = bottomLine.normalizedText.trim().first()
-                for (nIdx in lines.indices) {
-                    if (nIdx == bIdx || consumedLineIndices.contains(nIdx)) continue
-                    val nLine = lines[nIdx]
-                    if (isPureNumber(nLine.normalizedText)) {
-                        val nBox = nLine.bounds
-                        val vCenterDiff = abs(nBox.centerY - bottomBox.centerY)
-                        if (vCenterDiff <= max(bottomBox.height, nBox.height) * 0.75f) {
-                            val hGap = nBox.left - bottomBox.right
-                            if (hGap >= -0.05f && hGap <= 0.20f) {
-                                operator = opChar
-                                bottomNumber = stripProblemNumber(nLine.normalizedText).trim()
-                                bottomBox = RectBounds(
-                                    bottomBox.left,
-                                    min(bottomBox.top, nBox.top),
-                                    nBox.right,
-                                    max(bottomBox.bottom, nBox.bottom)
-                                )
-                                bottomConfidence = min(bottomLine.confidence, nLine.confidence)
-                                partnerNumIdx = nIdx
-                                break
-                            }
-                        }
+            val opChar = when {
+                isSingleOperator(opLine.normalizedText) -> opLine.normalizedText.trim().first()
+                isSingleOperator(opLine.rawText) -> opLine.rawText.trim().first()
+                else -> null
+            } ?: continue
+
+            var bestNumIdx: Int? = null
+            var bestHGap = Float.MAX_VALUE
+            for (numIdx in lines.indices) {
+                if (numIdx == opIdx || consumedLineIndices.contains(numIdx) || usedInRows.contains(numIdx)) continue
+                val numLine = lines[numIdx]
+                if (isProblemLabel(numLine.rawText) || isSeparatorLine(numLine.rawText)) continue
+                if (!isPureNumber(numLine.normalizedText)) continue
+
+                val vCenterDiff = abs(numLine.bounds.centerY - opLine.bounds.centerY)
+                if (vCenterDiff <= max(opLine.bounds.height, numLine.bounds.height) * 0.75f) {
+                    val hGap = numLine.bounds.left - opLine.bounds.right
+                    if (hGap >= -0.05f && hGap <= 0.25f && hGap < bestHGap) {
+                        bestHGap = hGap
+                        bestNumIdx = numIdx
                     }
                 }
             }
 
-            if (operator == null || bottomNumber == null) continue
+            if (bestNumIdx != null) {
+                val numLine = lines[bestNumIdx]
+                val numStr = stripProblemNumber(numLine.normalizedText).trim()
+                val mergedBox = RectBounds(
+                    opLine.bounds.left,
+                    min(opLine.bounds.top, numLine.bounds.top),
+                    numLine.bounds.right,
+                    max(opLine.bounds.bottom, numLine.bounds.bottom)
+                )
+                columnRows.add(
+                    ColumnRow(
+                        operator = opChar,
+                        number = numStr,
+                        bounds = mergedBox,
+                        confidence = min(opLine.confidence, numLine.confidence),
+                        sourceLineIndices = listOf(opIdx, bestNumIdx)
+                    )
+                )
+                usedInRows.add(opIdx)
+                usedInRows.add(bestNumIdx)
+            }
+        }
 
+        // 2b. Extract combined operator + number lines (e.g. "+ 15", "- 27")
+        for (idx in lines.indices) {
+            if (consumedLineIndices.contains(idx) || usedInRows.contains(idx)) continue
+            val line = lines[idx]
+            if (isProblemLabel(line.rawText) || isSeparatorLine(line.rawText)) continue
+
+            val opAndNum = extractOperatorAndNumber(line.normalizedText)
+                ?: extractOperatorAndNumber(line.rawText)
+            if (opAndNum != null) {
+                columnRows.add(
+                    ColumnRow(
+                        operator = opAndNum.first,
+                        number = opAndNum.second,
+                        bounds = line.bounds,
+                        confidence = line.confidence,
+                        sourceLineIndices = listOf(idx)
+                    )
+                )
+                usedInRows.add(idx)
+            }
+        }
+
+        // 2c. Extract pure numbers (e.g. "12", "65", "125")
+        for (idx in lines.indices) {
+            if (consumedLineIndices.contains(idx) || usedInRows.contains(idx)) continue
+            val line = lines[idx]
+            if (isProblemLabel(line.rawText) || isSeparatorLine(line.rawText)) continue
+
+            if (isPureNumber(line.normalizedText)) {
+                val numStr = stripProblemNumber(line.normalizedText).trim()
+                columnRows.add(
+                    ColumnRow(
+                        operator = null,
+                        number = numStr,
+                        bounds = line.bounds,
+                        confidence = line.confidence,
+                        sourceLineIndices = listOf(idx)
+                    )
+                )
+                usedInRows.add(idx)
+            }
+        }
+
+        // 2d. Sort all candidate rows by their vertical top position
+        columnRows.sortBy { it.bounds.top }
+
+        // 2e. Cluster column rows into distinct column problems
+        val clusters = mutableListOf<ColumnCluster>()
+        for (row in columnRows) {
+            var matchedCluster: ColumnCluster? = null
+            var bestDistance = Float.MAX_VALUE
+
+            for (cluster in clusters) {
+                val lastRow = cluster.rows.last()
+
+                // Must be below the last row in the cluster
+                if (row.bounds.top < lastRow.bounds.top) continue
+
+                val vGap = row.bounds.top - lastRow.bounds.bottom
+                val maxHeight = max(lastRow.bounds.height, row.bounds.height)
+                // Adjacent vertical spacing: within standard line height spacing (-0.35 to 1.6x line height)
+                if (vGap < -0.35f * maxHeight || vGap > 1.6f * maxHeight) continue
+
+                // Horizontal alignment check
+                val overlapLeft = max(row.bounds.left, cluster.bounds.left)
+                val overlapRight = min(row.bounds.right, cluster.bounds.right)
+                val overlapWidth = max(0f, overlapRight - overlapLeft)
+                val minW = min(row.bounds.width, cluster.bounds.width)
+
+                val centerDiffX = abs(row.bounds.centerX - cluster.centerX)
+                val isAligned = (overlapWidth >= 0.20f * minW) ||
+                        (centerDiffX <= max(row.bounds.width, cluster.averageWidth) * 0.85f)
+
+                if (isAligned && vGap < bestDistance) {
+                    bestDistance = vGap
+                    matchedCluster = cluster
+                }
+            }
+
+            if (matchedCluster != null) {
+                matchedCluster.rows.add(row)
+                matchedCluster.bounds = RectBounds(
+                    min(matchedCluster.bounds.left, row.bounds.left),
+                    min(matchedCluster.bounds.top, row.bounds.top),
+                    max(matchedCluster.bounds.right, row.bounds.right),
+                    max(matchedCluster.bounds.bottom, row.bounds.bottom)
+                )
+            } else {
+                clusters.add(
+                    ColumnCluster(
+                        rows = mutableListOf(row),
+                        bounds = row.bounds
+                    )
+                )
+            }
+        }
+
+        // 2f. Process each cluster into a full mathematical candidate
+        for (cluster in clusters) {
+            // Require at least 2 rows in column arithmetic (e.g. 12 and + 15, or 12, + 15, + 13)
+            if (cluster.rows.size < 2) continue
+
+            // Must contain at least one explicit arithmetic operator
+            val explicitOps = cluster.rows.mapNotNull { it.operator }
+            if (explicitOps.isEmpty()) continue
+
+            // Check for printed separator line underneath the last row
+            val lastRow = cluster.rows.last()
+            val bottomBox = lastRow.bounds
             val bottomHeight = max(0.01f, bottomBox.height)
             val bottomWidth = max(0.01f, bottomBox.width)
 
-            var bestTopIdx: Int? = null
-            var bestDistance = Float.MAX_VALUE
+            var absorbedSepIdx: Int? = null
+            var sepBox: RectBounds? = null
 
-            for (tIdx in lines.indices) {
-                if (tIdx == bIdx || tIdx == partnerNumIdx || consumedLineIndices.contains(tIdx)) continue
-
-                val topLine = lines[tIdx]
-                if (!isPureNumber(topLine.normalizedText)) continue
-
-                val topBox = topLine.bounds
-
-                // Must be above the bottom line
-                if (topBox.top >= bottomBox.top) continue
-
-                val verticalGap = bottomBox.top - topBox.bottom
-                // Vertical gap check: accounts for spacing between top operand and bottom operand
-                if (verticalGap < -0.35f * bottomHeight || verticalGap > 3.0f * bottomHeight) continue
-
-                val topWidth = max(0.01f, topBox.width)
-
-                // Horizontal alignment check
-                val overlapLeft = max(topBox.left, bottomBox.left)
-                val overlapRight = min(topBox.right, bottomBox.right)
-                val overlapWidth = max(0f, overlapRight - overlapLeft)
-                val minWidth = min(topWidth, bottomWidth)
-
-                val centerDistX = abs(topBox.centerX - bottomBox.centerX)
-                val isAligned = (overlapWidth >= 0.20f * minWidth) || (centerDistX <= max(topWidth, bottomWidth) * 0.85f)
-
-                if (isAligned && verticalGap < bestDistance) {
-                    bestDistance = verticalGap
-                    bestTopIdx = tIdx
+            for (sIdx in lines.indices) {
+                if (consumedLineIndices.contains(sIdx)) continue
+                val sLine = lines[sIdx]
+                if (isSeparatorLine(sLine.rawText) || isSeparatorLine(sLine.normalizedText)) {
+                    val sB = sLine.bounds
+                    val vGap = sB.top - bottomBox.bottom
+                    if (vGap >= -0.30f * bottomHeight && vGap <= 1.3f * bottomHeight) {
+                        val distCenter = abs(sB.centerX - bottomBox.centerX)
+                        if (distCenter <= max(bottomWidth, sB.width) * 0.90f) {
+                            absorbedSepIdx = sIdx
+                            sepBox = sB
+                            break
+                        }
+                    }
                 }
             }
 
-            if (bestTopIdx != null) {
-                val topLine = lines[bestTopIdx]
-                val topNumber = stripProblemNumber(topLine.normalizedText).trim()
-                val combinedText = "$topNumber $operator $bottomNumber"
-                val combinedConfidence = min(topLine.confidence, bottomConfidence)
+            // Construct expression string
+            val topNumber = cluster.rows.first().number
+            val sb = StringBuilder(topNumber)
+            val fallbackOp = explicitOps.first()
 
-                if (combinedConfidence >= minConfidence) {
-                    var boundLeft = min(topLine.bounds.left, bottomLine.bounds.left)
-                    var boundTop = topLine.bounds.top
-                    var boundRight = max(topLine.bounds.right, bottomLine.bounds.right)
-                    var boundBottom = bottomLine.bounds.bottom
+            for (rIdx in 1 until cluster.rows.size) {
+                val row = cluster.rows[rIdx]
+                val op = row.operator ?: fallbackOp
+                sb.append(" ").append(op).append(" ").append(row.number)
+            }
 
-                    // Check for a printed separator line (e.g. "----", "____") directly underneath bottomLine
-                    for (sIdx in lines.indices) {
-                        if (sIdx == bIdx || sIdx == bestTopIdx) continue
-                        val sLine = lines[sIdx]
-                        if (isSeparatorLine(sLine.rawText) || isSeparatorLine(sLine.normalizedText)) {
-                            val sBox = sLine.bounds
-                            val sepGap = sBox.top - bottomLine.bounds.bottom
-                            if (sepGap >= -0.25f * bottomHeight && sepGap <= 1.2f * bottomHeight) {
-                                val sCenterDist = abs(sBox.centerX - bottomBox.centerX)
-                                if (sCenterDist <= max(bottomWidth, sBox.width) * 0.85f) {
-                                    boundLeft = min(boundLeft, sBox.left)
-                                    boundRight = max(boundRight, sBox.right)
-                                    boundBottom = max(boundBottom, sBox.bottom)
-                                    consumedLineIndices.add(sIdx)
-                                    break
-                                }
-                            }
-                        }
-                    }
+            val expressionText = sb.toString()
+            val clusterConfidence = cluster.rows.map { it.confidence }.minOrNull() ?: 0.5f
 
-                    val unionBox = RectBounds(boundLeft, boundTop, boundRight, boundBottom)
+            if (clusterConfidence < minConfidence) continue
+            if (!MathRegionFilter.isViableArithmetic(expressionText, confidence = clusterConfidence, minConfidence = minConfidence)) continue
 
-                    candidates.add(
-                        VisionCandidate(
-                            id = idGenerator(),
-                            rawText = "${topLine.rawText}\n${bottomLine.rawText}",
-                            normalizedText = combinedText,
-                            boundingBox = unionBox,
-                            confidence = combinedConfidence
-                        )
-                    )
+            // Verify with math engine
+            if (MathEngine.evaluate(expressionText) is MathResult.SyntaxError) continue
 
-                    consumedLineIndices.add(bIdx)
-                    consumedLineIndices.add(bestTopIdx)
-                    partnerNumIdx?.let { consumedLineIndices.add(it) }
-                }
+            // Compute unified spatial bounding box including separator line
+            var boundLeft = cluster.bounds.left
+            var boundTop = cluster.bounds.top
+            var boundRight = cluster.bounds.right
+            var boundBottom = cluster.bounds.bottom
+
+            if (sepBox != null) {
+                boundLeft = min(boundLeft, sepBox.left)
+                boundRight = max(boundRight, sepBox.right)
+                boundBottom = max(boundBottom, sepBox.bottom)
+                absorbedSepIdx?.let { consumedLineIndices.add(it) }
+            }
+
+            val unionBox = RectBounds(boundLeft, boundTop, boundRight, boundBottom)
+            val rawText = cluster.rows.joinToString("\n") { row ->
+                if (row.operator != null) "${row.operator} ${row.number}" else row.number
+            }
+
+            candidates.add(
+                VisionCandidate(
+                    id = idGenerator(),
+                    rawText = rawText,
+                    normalizedText = expressionText,
+                    boundingBox = unionBox,
+                    confidence = clusterConfidence
+                )
+            )
+
+            // Mark lines consumed
+            for (row in cluster.rows) {
+                consumedLineIndices.addAll(row.sourceLineIndices)
             }
         }
 
