@@ -4,21 +4,44 @@ import com.calclens.math.MathEngine
 import com.calclens.math.MathResult
 import com.calclens.vision.RectBounds
 import com.calclens.vision.VisionCandidate
+import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.sqrt
 
+/**
+ * High-frequency spatial tracker managing persistent mathematical expression objects.
+ * Decouples low-frequency visual recognition (~5-15 Hz) from high-frequency spatial tracking (60-120+ Hz).
+ */
 class SpatialTracker(
-    private val iouThreshold: Float = 0.35f,
-    private val gracePeriodMs: Long = 500L,
+    private val iouThreshold: Float = 0.30f,
+    private val gracePeriodMs: Long = 800L,
     private val minFramesToDisplay: Int = 2,
-    private val smoothingAlphaStationary: Float = 0.30f,
+    private val smoothingAlphaStationary: Float = 0.40f,
     private val smoothingAlphaDynamic: Float = 0.85f
 ) {
     private val entities = mutableMapOf<String, TrackedEquation>()
 
+    @Synchronized
     fun getEntities(): List<TrackedEquation> = entities.values.toList()
 
+    /**
+     * Applies instantaneous high-frequency motion predicted by IMU/gyroscope sensors.
+     * Keeps overlays physically locked to the paper even during rapid camera movement.
+     */
+    @Synchronized
+    fun applyImuMotion(deltaX: Float, deltaY: Float) {
+        if (deltaX == 0f && deltaY == 0f) return
+        for (entity in entities.values) {
+            entity.smoothedBox = entity.smoothedBox.offset(deltaX, deltaY)
+            entity.boundingBox = entity.boundingBox.offset(deltaX, deltaY)
+        }
+    }
+
+    /**
+     * Updates tracked entities with new vision candidates from the OCR/reconstruction pipeline.
+     */
+    @Synchronized
     fun updateWithVisionCandidates(
         candidates: List<VisionCandidate>,
         currentTime: Long = System.currentTimeMillis()
@@ -35,13 +58,13 @@ class SpatialTracker(
                 val iou = calculateIoU(candidate.boundingBox, entity.boundingBox)
                 val textMatches = entity.normalizedText == candidate.normalizedText
 
-                val dx: Float = kotlin.math.abs(candidate.boundingBox.centerX - entity.boundingBox.centerX)
-                val dy: Float = kotlin.math.abs(candidate.boundingBox.centerY - entity.boundingBox.centerY)
-                val isSpatiallyClose = dx < 0.15f && dy < 0.12f
+                val dx: Float = abs(candidate.boundingBox.centerX - entity.boundingBox.centerX)
+                val dy: Float = abs(candidate.boundingBox.centerY - entity.boundingBox.centerY)
+                val isSpatiallyClose = dx < 0.18f && dy < 0.14f
 
                 var score = 0f
                 if (textMatches && isSpatiallyClose) {
-                    score = 1.0f + iou + (0.15f - dx)
+                    score = 1.0f + iou + (0.18f - dx)
                 } else if (iou >= iouThreshold) {
                     score = iou + (if (textMatches) 0.5f else 0.0f)
                 }
@@ -60,11 +83,14 @@ class SpatialTracker(
                 if (textMatches) {
                     entity.consecutiveMatches++
                 } else {
-                    entity.consecutiveMatches = 1
-                    entity.normalizedText = candidate.normalizedText
-                    entity.rawText = candidate.rawText
-                    entity.result = null
-                    entity.errorMessage = null
+                    // Only swap text if the candidate has very high confidence
+                    if (candidate.confidence >= 0.75f) {
+                        entity.consecutiveMatches = 1
+                        entity.normalizedText = candidate.normalizedText
+                        entity.rawText = candidate.rawText
+                        entity.result = null
+                        entity.errorMessage = null
+                    }
                 }
 
                 val dt = max(0.016f, (currentTime - entity.lastSeen) / 1000f)
@@ -76,66 +102,65 @@ class SpatialTracker(
                 entity.lastSeen = currentTime
 
                 val speed = sqrt(entity.velocityX * entity.velocityX + entity.velocityY * entity.velocityY)
-                val alpha = if (speed > 0.4f) smoothingAlphaDynamic else smoothingAlphaStationary
+                val alpha = if (speed > 0.35f) smoothingAlphaDynamic else smoothingAlphaStationary
 
                 entity.smoothedBox = RectBounds(
                     alpha * candidate.boundingBox.left + (1f - alpha) * entity.smoothedBox.left,
-                    alpha * candidate.boundingBox.top + (1 - alpha) * entity.smoothedBox.top,
-                    alpha * candidate.boundingBox.right + (1 - alpha) * entity.smoothedBox.right,
-                    alpha * candidate.boundingBox.bottom + (1 - alpha) * entity.smoothedBox.bottom
+                    alpha * candidate.boundingBox.top + (1f - alpha) * entity.smoothedBox.top,
+                    alpha * candidate.boundingBox.right + (1f - alpha) * entity.smoothedBox.right,
+                    alpha * candidate.boundingBox.bottom + (1f - alpha) * entity.smoothedBox.bottom
                 )
 
+                // Confirm and calculate expression once stable across multiple frames
                 if (entity.consecutiveMatches >= minFramesToDisplay) {
                     if (entity.result == null && entity.errorMessage == null) {
                         when (val mathResult = MathEngine.evaluate(entity.normalizedText)) {
                             is MathResult.Success -> {
                                 entity.result = mathResult.formatted
                                 entity.status = TrackingStatus.DISPLAYING
-                                android.util.Log.d("CalcLens", "Evaluated '${entity.normalizedText}' = ${mathResult.formatted} (matches=${entity.consecutiveMatches})")
+                                android.util.Log.d("CalcLens", "Locked '${entity.normalizedText}' = ${mathResult.formatted}")
                             }
                             is MathResult.DivisionByZero -> {
                                 entity.errorMessage = "Undefined"
                                 entity.status = TrackingStatus.DISPLAYING
-                                android.util.Log.d("CalcLens", "Evaluated '${entity.normalizedText}' = DivisionByZero")
                             }
                             is MathResult.Overflow -> {
                                 entity.errorMessage = "Overflow"
                                 entity.status = TrackingStatus.DISPLAYING
-                                android.util.Log.d("CalcLens", "Evaluated '${entity.normalizedText}' = Overflow")
                             }
                             is MathResult.SyntaxError -> {
                                 entity.errorMessage = "Invalid"
                                 entity.status = TrackingStatus.DISPLAYING
-                                android.util.Log.d("CalcLens", "Evaluated '${entity.normalizedText}' = SyntaxError: ${mathResult.message}")
                             }
                         }
                     } else {
-                        entity.status = TrackingStatus.TRACKING
+                        entity.status = TrackingStatus.DISPLAYING
                     }
                 } else {
                     entity.status = TrackingStatus.DETECTED
-                    android.util.Log.d("CalcLens", "Candidate '${entity.normalizedText}' accumulating matches: ${entity.consecutiveMatches}/$minFramesToDisplay")
                 }
             } else {
-                // New Candidate
-                val newEntity = TrackedEquation(
-                    id = candidate.id,
-                    rawText = candidate.rawText,
-                    normalizedText = candidate.normalizedText,
-                    confidence = candidate.confidence,
-                    boundingBox = candidate.boundingBox,
-                    smoothedBox = candidate.boundingBox,
-                    firstSeen = currentTime,
-                    lastSeen = currentTime,
-                    consecutiveMatches = 1,
-                    status = TrackingStatus.DETECTED
-                )
-                entities[candidate.id] = newEntity
-                matchedIds.add(candidate.id)
+                // New Candidate: require adequate confidence (>= 0.65f)
+                if (candidate.confidence >= 0.65f) {
+                    val newEntity = TrackedEquation(
+                        id = candidate.id,
+                        rawText = candidate.rawText,
+                        normalizedText = candidate.normalizedText,
+                        confidence = candidate.confidence,
+                        boundingBox = candidate.boundingBox,
+                        smoothedBox = candidate.boundingBox,
+                        firstSeen = currentTime,
+                        lastSeen = currentTime,
+                        consecutiveMatches = 1,
+                        status = TrackingStatus.DETECTED
+                    )
+                    entities[candidate.id] = newEntity
+                    matchedIds.add(candidate.id)
+                }
             }
         }
 
-        // Handle unmatched entities (temporary occlusion / out of frame)
+        // Handle unmatched entities (temporary occlusion / camera motion)
         val iterator = entities.iterator()
         while (iterator.hasNext()) {
             val (id, entity) = iterator.next()
@@ -144,9 +169,12 @@ class SpatialTracker(
                 if (timeSinceSeen > gracePeriodMs) {
                     iterator.remove()
                 } else {
-                    entity.status = TrackingStatus.LOST
+                    // Maintain last known position with slight velocity extrapolation
                     val dt = 0.016f
-                    entity.smoothedBox = entity.smoothedBox.offset(entity.velocityX * dt * 0.5f, entity.velocityY * dt * 0.5f)
+                    entity.smoothedBox = entity.smoothedBox.offset(
+                        entity.velocityX * dt * 0.4f,
+                        entity.velocityY * dt * 0.4f
+                    )
                 }
             }
         }
@@ -154,6 +182,7 @@ class SpatialTracker(
         return entities.values.toList()
     }
 
+    @Synchronized
     fun clear() {
         entities.clear()
     }

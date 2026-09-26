@@ -1,13 +1,10 @@
 package com.calclens.ui
 
-import android.graphics.RectF
 import androidx.camera.view.PreviewView
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -17,15 +14,14 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLifecycleOwner
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.calclens.camera.CameraManager
-import com.calclens.overlay.BadgeLayout
-import com.calclens.overlay.CollisionAvoidance
 import com.calclens.overlay.CoordinateTransformer
+import com.calclens.overlay.StickyOverlayView
+import com.calclens.tracking.ImuMotionPredictor
 import com.calclens.tracking.SpatialTracker
 import com.calclens.tracking.TrackingStatus
 import com.calclens.ui.theme.*
@@ -40,55 +36,19 @@ fun CalcLensScreen() {
     val cameraManager = remember { CameraManager(context) }
     val tracker = remember { SpatialTracker() }
     val transformer = remember { CoordinateTransformer(viewportWidth = 1080f, viewportHeight = 1920f) }
+    val imuPredictor = remember { ImuMotionPredictor(context) }
 
     var torchEnabled by remember { mutableStateOf(false) }
     var isPaused by remember { mutableStateOf(false) }
     val currentPaused by rememberUpdatedState(isPaused)
     var showAboutDialog by remember { mutableStateOf(false) }
 
-    var activeLayouts by remember { mutableStateOf<List<BadgeLayout>>(emptyList()) }
     var globalStatus by remember { mutableStateOf("SEARCHING") }
 
     DisposableEffect(Unit) {
         onDispose {
             cameraManager.shutdown()
-        }
-    }
-
-    // Function to process vision candidates into tracked layout entities
-    val processCandidates = remember {
-        { candidates: List<VisionCandidate> ->
-            if (!currentPaused) {
-                val entities = tracker.updateWithVisionCandidates(candidates)
-
-                val layouts = entities
-                    .filter { it.status != TrackingStatus.LOST || (System.currentTimeMillis() - it.lastSeen < 400L) }
-                    .map { entity ->
-                        val exprRect = transformer.toScreenRect(entity.smoothedBox)
-                        val textLength = (entity.result ?: entity.errorMessage ?: "..").length
-                        val badgeRect = transformer.computeBadgePlacement(
-                            expressionRect = exprRect,
-                            textLength = textLength
-                        )
-                        BadgeLayout(
-                            id = entity.id,
-                            badgeRect = badgeRect,
-                            expressionRect = exprRect,
-                            result = entity.result,
-                            errorMessage = entity.errorMessage,
-                            status = entity.status,
-                            rawText = entity.rawText
-                        )
-                    }
-
-                activeLayouts = CollisionAvoidance.resolveCollisions(layouts)
-                globalStatus = when {
-                    entities.any { it.status == TrackingStatus.DISPLAYING } -> "SOLVED"
-                    entities.any { it.status == TrackingStatus.TRACKING } -> "TRACKING"
-                    entities.any { it.status == TrackingStatus.DETECTED } -> "RECOGNIZING"
-                    else -> "SEARCHING"
-                }
-            }
+            imuPredictor.stop()
         }
     }
 
@@ -97,7 +57,13 @@ fun CalcLensScreen() {
             if (!currentPaused) {
                 transformer.sensorWidth = imgW.toFloat()
                 transformer.sensorHeight = imgH.toFloat()
-                processCandidates(candidates)
+                val entities = tracker.updateWithVisionCandidates(candidates)
+                globalStatus = when {
+                    entities.any { it.status == TrackingStatus.DISPLAYING } -> "SOLVED"
+                    entities.any { it.status == TrackingStatus.TRACKING } -> "TRACKING"
+                    entities.any { it.status == TrackingStatus.DETECTED } -> "RECOGNIZING"
+                    else -> "SEARCHING"
+                }
             }
         }
     }
@@ -123,62 +89,13 @@ fun CalcLensScreen() {
             }
         )
 
-        // Layer 2: Augmented Mathematical Overlays
-        for (layout in activeLayouts) {
-            val leftDp = with(density) { layout.badgeRect.left.toDp() }
-            val topDp = with(density) { layout.badgeRect.top.toDp() }
-            val widthDp = with(density) { layout.badgeRect.width.toDp() }
-            val heightDp = with(density) { layout.badgeRect.height.toDp() }
-
-            val exprLeftDp = with(density) { layout.expressionRect.left.toDp() }
-            val exprTopDp = with(density) { layout.expressionRect.top.toDp() }
-            val exprWidthDp = with(density) { layout.expressionRect.width.toDp() }
-            val exprHeightDp = with(density) { layout.expressionRect.height.toDp() }
-
-            // Reticle around recognized physical text
-            Box(
-                modifier = Modifier
-                    .offset(x = exprLeftDp, y = exprTopDp)
-                    .size(width = exprWidthDp, height = exprHeightDp)
-                    .border(1.5.dp, Color(0x7760A5FA), RoundedCornerShape(6.dp))
-            )
-
-            // Anchored Answer Badge
-            val borderColor = if (layout.errorMessage != null) AccentRed else AccentGreen
-            Box(
-                modifier = Modifier
-                    .offset(x = leftDp, y = topDp)
-                    .size(width = widthDp, height = heightDp)
-                    .clip(RoundedCornerShape(8.dp))
-                    .background(FrostedGlass)
-                    .border(1.5.dp, borderColor, RoundedCornerShape(8.dp)),
-                contentAlignment = Alignment.Center
-            ) {
-                if (layout.result != null) {
-                    Text(
-                        text = layout.result,
-                        color = Color.White,
-                        fontSize = 18.sp,
-                        fontWeight = FontWeight.Bold,
-                        fontFamily = FontFamily.Monospace
-                    )
-                } else if (layout.errorMessage != null) {
-                    Text(
-                        text = layout.errorMessage,
-                        color = Color(0xFFFCA5A5),
-                        fontSize = 14.sp,
-                        fontWeight = FontWeight.SemiBold
-                    )
-                } else {
-                    Text(
-                        text = "...",
-                        color = TextSecondary,
-                        fontSize = 18.sp,
-                        fontWeight = FontWeight.Bold
-                    )
-                }
+        // Layer 2: Hardware-Accelerated 120Hz Sticky Mathematical Overlay
+        AndroidView(
+            modifier = Modifier.fillMaxSize(),
+            factory = { ctx ->
+                StickyOverlayView(ctx, tracker, imuPredictor, transformer)
             }
-        }
+        )
 
         // Layer 3: Top Control Bar (Clean Minimal Production UI)
         Row(
