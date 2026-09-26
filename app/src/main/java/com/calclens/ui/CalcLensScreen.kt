@@ -42,11 +42,12 @@ fun CalcLensScreen() {
     val transformer = remember { CoordinateTransformer(viewportWidth = 1080f, viewportHeight = 1920f) }
 
     var torchEnabled by remember { mutableStateOf(false) }
-    var showStats by remember { mutableStateOf(false) }
+    var isPaused by remember { mutableStateOf(false) }
+    val currentPaused by rememberUpdatedState(isPaused)
+    var showAboutDialog by remember { mutableStateOf(false) }
 
     var activeLayouts by remember { mutableStateOf<List<BadgeLayout>>(emptyList()) }
     var globalStatus by remember { mutableStateOf("SEARCHING") }
-    var lastOcrLatency by remember { mutableLongStateOf(0L) }
 
     DisposableEffect(Unit) {
         onDispose {
@@ -57,39 +58,41 @@ fun CalcLensScreen() {
     // Function to process vision candidates into tracked layout entities
     val processCandidates = remember {
         { candidates: List<VisionCandidate> ->
-            val start = System.currentTimeMillis()
-            val entities = tracker.updateWithVisionCandidates(candidates)
-            lastOcrLatency = System.currentTimeMillis() - start
+            if (!currentPaused) {
+                val entities = tracker.updateWithVisionCandidates(candidates)
 
-            val layouts = entities
-                .filter { it.status != TrackingStatus.LOST || (System.currentTimeMillis() - it.lastSeen < 400L) }
-                .map { entity ->
-                    val exprRect = transformer.toScreenRect(entity.smoothedBox)
-                    val badgeRect = transformer.computeBadgePlacement(exprRect)
-                    BadgeLayout(
-                        id = entity.id,
-                        badgeRect = badgeRect,
-                        expressionRect = exprRect,
-                        result = entity.result,
-                        errorMessage = entity.errorMessage,
-                        status = entity.status,
-                        rawText = entity.rawText
-                    )
+                val layouts = entities
+                    .filter { it.status != TrackingStatus.LOST || (System.currentTimeMillis() - it.lastSeen < 400L) }
+                    .map { entity ->
+                        val exprRect = transformer.toScreenRect(entity.smoothedBox)
+                        val badgeRect = transformer.computeBadgePlacement(exprRect)
+                        BadgeLayout(
+                            id = entity.id,
+                            badgeRect = badgeRect,
+                            expressionRect = exprRect,
+                            result = entity.result,
+                            errorMessage = entity.errorMessage,
+                            status = entity.status,
+                            rawText = entity.rawText
+                        )
+                    }
+
+                activeLayouts = CollisionAvoidance.resolveCollisions(layouts)
+                globalStatus = when {
+                    entities.any { it.status == TrackingStatus.DISPLAYING } -> "SOLVED"
+                    entities.any { it.status == TrackingStatus.TRACKING } -> "TRACKING"
+                    entities.any { it.status == TrackingStatus.DETECTED } -> "RECOGNIZING"
+                    else -> "SEARCHING"
                 }
-
-            activeLayouts = CollisionAvoidance.resolveCollisions(layouts)
-            globalStatus = when {
-                entities.any { it.status == TrackingStatus.DISPLAYING } -> "DISPLAYING"
-                entities.any { it.status == TrackingStatus.TRACKING } -> "TRACKING"
-                entities.any { it.status == TrackingStatus.DETECTED } -> "DETECTED"
-                else -> "SEARCHING"
             }
         }
     }
 
     val analyzer = remember {
         TextRecognitionAnalyzer { candidates ->
-            processCandidates(candidates)
+            if (!currentPaused) {
+                processCandidates(candidates)
+            }
         }
     }
 
@@ -125,7 +128,7 @@ fun CalcLensScreen() {
             val exprWidthDp = with(density) { layout.expressionRect.width().toDp() }
             val exprHeightDp = with(density) { layout.expressionRect.height().toDp() }
 
-            // Dashed reticle around recognized physical text
+            // Reticle around recognized physical text
             Box(
                 modifier = Modifier
                     .offset(x = exprLeftDp, y = exprTopDp)
@@ -170,7 +173,7 @@ fun CalcLensScreen() {
             }
         }
 
-        // Layer 3: Top Control Bar
+        // Layer 3: Top Control Bar (Clean Minimal Production UI)
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -188,11 +191,19 @@ fun CalcLensScreen() {
                     .padding(horizontal = 14.dp, vertical = 8.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                val dotColor = when (globalStatus) {
-                    "DISPLAYING", "TRACKING" -> AccentGreen
-                    "DETECTED" -> AccentBlue
+                val dotColor = when {
+                    isPaused -> Color(0xFF94A3B8)
+                    globalStatus == "SOLVED" || globalStatus == "TRACKING" -> AccentGreen
+                    globalStatus == "RECOGNIZING" -> AccentBlue
                     else -> Color(0xFFEAB308)
                 }
+                val statusLabel = when {
+                    isPaused -> "Paused"
+                    globalStatus == "SOLVED" || globalStatus == "TRACKING" -> "Live"
+                    globalStatus == "RECOGNIZING" -> "Reading..."
+                    else -> "Point at math"
+                }
+
                 Box(
                     modifier = Modifier
                         .size(8.dp)
@@ -201,15 +212,30 @@ fun CalcLensScreen() {
                 )
                 Spacer(modifier = Modifier.width(8.dp))
                 Text(
-                    text = globalStatus,
+                    text = statusLabel,
                     color = TextPrimary,
                     fontSize = 12.sp,
                     fontWeight = FontWeight.Bold
                 )
             }
 
-            // Actions
+            // Controls: Pause, Torch, Info
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(
+                    onClick = { isPaused = !isPaused },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = if (isPaused) AccentBlue else FrostedGlass
+                    ),
+                    shape = CircleShape,
+                    contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp)
+                ) {
+                    Text(
+                        text = if (isPaused) "Resume" else "Pause",
+                        fontSize = 12.sp,
+                        color = TextPrimary
+                    )
+                }
+
                 Button(
                     onClick = {
                         torchEnabled = !torchEnabled
@@ -225,37 +251,44 @@ fun CalcLensScreen() {
                 }
 
                 Button(
-                    onClick = { showStats = !showStats },
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = if (showStats) AccentBlue else FrostedGlass
-                    ),
+                    onClick = { showAboutDialog = true },
+                    colors = ButtonDefaults.buttonColors(containerColor = FrostedGlass),
                     shape = CircleShape,
-                    contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp)
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
                 ) {
-                    Text(text = "Stats", fontSize = 12.sp, color = TextPrimary)
+                    Text(text = "About", fontSize = 12.sp, color = TextPrimary)
                 }
             }
         }
 
-        // Diagnostic Stats Drawer
-        if (showStats) {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 80.dp, start = 16.dp, end = 16.dp)
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(FrostedGlass)
-                    .border(1.dp, PillBorder, RoundedCornerShape(12.dp))
-                    .padding(14.dp)
-            ) {
-                Column {
-                    Text(text = "CALCLENS DIAGNOSTICS", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = TextSecondary)
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Text(text = "Status: $globalStatus", fontSize = 13.sp, color = TextPrimary, fontFamily = FontFamily.Monospace)
-                    Text(text = "Active Tracks: ${activeLayouts.size}", fontSize = 13.sp, color = TextPrimary, fontFamily = FontFamily.Monospace)
-                    Text(text = "Processing Latency: ${lastOcrLatency} ms", fontSize = 13.sp, color = TextPrimary, fontFamily = FontFamily.Monospace)
+        // About / Info Modal
+        if (showAboutDialog) {
+            AlertDialog(
+                onDismissRequest = { showAboutDialog = false },
+                containerColor = FrostedGlass,
+                titleContentColor = TextPrimary,
+                textContentColor = TextSecondary,
+                title = {
+                    Text(text = "CalcLens", fontWeight = FontWeight.Bold)
+                },
+                text = {
+                    Column {
+                        Text(text = "Continuous, camera-first spatial arithmetic solver.")
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(text = "• Point at any printed horizontal equation or vertical column arithmetic.")
+                        Text(text = "• 100% on-device vision and computation.")
+                        Text(text = "• Zero image pixels ever leave your device.")
+                    }
+                },
+                confirmButton = {
+                    Button(
+                        onClick = { showAboutDialog = false },
+                        colors = ButtonDefaults.buttonColors(containerColor = AccentBlue)
+                    ) {
+                        Text(text = "Done", color = Color.White)
+                    }
                 }
-            }
+            )
         }
     }
 }
