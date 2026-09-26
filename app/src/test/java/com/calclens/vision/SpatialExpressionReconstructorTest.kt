@@ -682,4 +682,127 @@ class SpatialExpressionReconstructorTest {
         val candidates = SpatialExpressionReconstructor.reconstruct(lines) { "uncertain-1" }
         assertEquals("Uncertain expression '2? x 14' must not produce any candidate", 0, candidates.size)
     }
+
+    @Test
+    fun testAcceptanceFourColumnsWithDiverseSegmentation() {
+        // Physical layout:
+        // Col 1:  5 / × / 2 / ──── (Pattern B: standalone operator row)
+        // Col 2:  4 / − 4 / ──── (Pattern A: combined operator row)
+        // Col 3: 12 / ÷ / 3 / ──── (Pattern B: standalone division operator row)
+        // Col 4:  6 / x / 8 / ──── (Pattern D: letter 'x' operator row)
+        val lines = listOf(
+            // Column 1: 5 * 2 = 10
+            RawTextLine("5", "5", RectBounds(0.12f, 0.40f, 0.20f, 0.45f), 0.95f),
+            RawTextLine("×", "*", RectBounds(0.08f, 0.46f, 0.12f, 0.49f), 0.93f, pixelHeight = 6f),
+            RawTextLine("2", "2", RectBounds(0.12f, 0.46f, 0.20f, 0.51f), 0.95f),
+            RawTextLine("────", "----", RectBounds(0.08f, 0.52f, 0.22f, 0.53f), 0.92f, pixelHeight = 3f),
+
+            // Column 2: 4 - 4 = 0
+            RawTextLine("4", "4", RectBounds(0.36f, 0.40f, 0.44f, 0.45f), 0.96f),
+            RawTextLine("− 4", "- 4", RectBounds(0.32f, 0.46f, 0.44f, 0.51f), 0.94f),
+            RawTextLine("────", "----", RectBounds(0.32f, 0.52f, 0.46f, 0.53f), 0.90f, pixelHeight = 3f),
+
+            // Column 3: 12 / 3 = 4
+            RawTextLine("12", "12", RectBounds(0.60f, 0.40f, 0.70f, 0.45f), 0.95f),
+            RawTextLine("÷", "/", RectBounds(0.56f, 0.46f, 0.60f, 0.49f), 0.91f, pixelHeight = 6f),
+            RawTextLine("3", "3", RectBounds(0.62f, 0.46f, 0.70f, 0.51f), 0.95f),
+            RawTextLine("────", "----", RectBounds(0.56f, 0.52f, 0.72f, 0.53f), 0.93f, pixelHeight = 3f),
+
+            // Column 4: 6 * 8 = 48
+            RawTextLine("6", "6", RectBounds(0.84f, 0.40f, 0.92f, 0.45f), 0.96f),
+            RawTextLine("x", "*", RectBounds(0.80f, 0.46f, 0.84f, 0.49f), 0.90f, pixelHeight = 7f),
+            RawTextLine("8", "8", RectBounds(0.84f, 0.46f, 0.92f, 0.51f), 0.95f),
+            RawTextLine("────", "----", RectBounds(0.80f, 0.52f, 0.94f, 0.53f), 0.91f, pixelHeight = 3f)
+        )
+
+        var idCount = 0
+        val candidates = SpatialExpressionReconstructor.reconstruct(lines) { "col-${++idCount}" }
+
+        // Must reconstruct all 4 columns independently
+        assertEquals(4, candidates.size)
+
+        val sorted = candidates.sortedBy { it.boundingBox.left }
+
+        assertEquals("5 * 2", sorted[0].normalizedText)
+        assertEquals("4 - 4", sorted[1].normalizedText)
+        assertEquals("12 / 3", sorted[2].normalizedText)
+        assertEquals("6 * 8", sorted[3].normalizedText)
+
+        // Evaluate deterministically
+        val res1 = MathEngine.evaluate(sorted[0].normalizedText) as MathResult.Success
+        val res2 = MathEngine.evaluate(sorted[1].normalizedText) as MathResult.Success
+        val res3 = MathEngine.evaluate(sorted[2].normalizedText) as MathResult.Success
+        val res4 = MathEngine.evaluate(sorted[3].normalizedText) as MathResult.Success
+
+        assertEquals("10", res1.formatted)
+        assertEquals("0", res2.formatted)
+        assertEquals("4", res3.formatted)
+        assertEquals("48", res4.formatted)
+
+        for (cand in sorted) {
+            assertEquals(ExpressionLayout.VERTICAL_COLUMN, cand.layout)
+            assertTrue("Separator must be absorbed into bounding box bottom", cand.boundingBox.bottom >= 0.52f)
+        }
+    }
+
+    @Test
+    fun testArbitrarySegmentationEquivalence() {
+        // OCR A: "5", "× 2"
+        val linesA = listOf(
+            RawTextLine("5", "5", RectBounds(0.40f, 0.20f, 0.50f, 0.25f), 0.95f),
+            RawTextLine("× 2", "* 2", RectBounds(0.35f, 0.26f, 0.50f, 0.31f), 0.94f)
+        )
+        val candA = SpatialExpressionReconstructor.reconstruct(linesA) { "A" }
+        assertEquals(1, candA.size)
+        assertEquals("5 * 2", candA[0].normalizedText)
+        assertEquals("10", (MathEngine.evaluate(candA[0].normalizedText) as MathResult.Success).formatted)
+
+        // OCR B: "5", "×", "2"
+        val linesB = listOf(
+            RawTextLine("5", "5", RectBounds(0.40f, 0.20f, 0.50f, 0.25f), 0.95f),
+            RawTextLine("×", "*", RectBounds(0.35f, 0.26f, 0.39f, 0.30f), 0.92f),
+            RawTextLine("2", "2", RectBounds(0.40f, 0.26f, 0.50f, 0.31f), 0.95f)
+        )
+        val candB = SpatialExpressionReconstructor.reconstruct(linesB) { "B" }
+        assertEquals(1, candB.size)
+        assertEquals("5 * 2", candB[0].normalizedText)
+        assertEquals("10", (MathEngine.evaluate(candB[0].normalizedText) as MathResult.Success).formatted)
+
+        // OCR C: "5 × 2"
+        val linesC = listOf(
+            RawTextLine("5 × 2", "5 * 2", RectBounds(0.35f, 0.20f, 0.65f, 0.25f), 0.95f)
+        )
+        val candC = SpatialExpressionReconstructor.reconstruct(linesC) { "C" }
+        assertEquals(1, candC.size)
+        assertEquals("5 * 2", candC[0].normalizedText)
+        assertEquals("10", (MathEngine.evaluate(candC[0].normalizedText) as MathResult.Success).formatted)
+
+        // OCR D: "5", "x", "2"
+        val linesD = listOf(
+            RawTextLine("5", "5", RectBounds(0.40f, 0.20f, 0.50f, 0.25f), 0.95f),
+            RawTextLine("x", "*", RectBounds(0.35f, 0.26f, 0.39f, 0.30f), 0.90f),
+            RawTextLine("2", "2", RectBounds(0.40f, 0.26f, 0.50f, 0.31f), 0.95f)
+        )
+        val candD = SpatialExpressionReconstructor.reconstruct(linesD) { "D" }
+        assertEquals(1, candD.size)
+        assertEquals("5 * 2", candD[0].normalizedText)
+        assertEquals("10", (MathEngine.evaluate(candD[0].normalizedText) as MathResult.Success).formatted)
+    }
+
+    @Test
+    fun testDistantTextAndThinOperatorPreservation() {
+        // Simulates thin operator (2.5px) and separator (2.0px) well below 10px threshold
+        val lines = listOf(
+            RawTextLine("74", "74", RectBounds(0.40f, 0.20f, 0.50f, 0.25f), 0.92f, pixelHeight = 18f),
+            RawTextLine("−", "-", RectBounds(0.36f, 0.26f, 0.39f, 0.29f), 0.88f, pixelHeight = 2.5f),
+            RawTextLine("38", "38", RectBounds(0.40f, 0.26f, 0.50f, 0.31f), 0.91f, pixelHeight = 18f),
+            RawTextLine("────", "----", RectBounds(0.35f, 0.33f, 0.52f, 0.35f), 0.89f, pixelHeight = 2.0f)
+        )
+
+        val candidates = SpatialExpressionReconstructor.reconstruct(lines) { "dist-1" }
+        assertEquals(1, candidates.size)
+        assertEquals("74 - 38", candidates[0].normalizedText)
+        val result = MathEngine.evaluate(candidates[0].normalizedText) as MathResult.Success
+        assertEquals("36", result.formatted)
+    }
 }

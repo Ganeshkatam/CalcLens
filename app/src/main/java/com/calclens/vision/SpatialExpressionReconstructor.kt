@@ -37,12 +37,13 @@ data class ReconstructionResult(
 
 private data class ColumnRow(
     val operator: Char?,
-    val number: String,
+    val number: String?,
     val bounds: RectBounds,
     val confidence: Float,
     val sourceLineIndices: List<Int>,
     val numberBounds: RectBounds = bounds
 )
+
 
 private data class ColumnCluster(
     val rows: MutableList<ColumnRow>,
@@ -97,31 +98,42 @@ object SpatialExpressionReconstructor {
         return cleaned.toDoubleOrNull() != null
     }
 
+    fun canonicalizeOperator(c: Char): Char? {
+        return when (c) {
+            '+', '＋' -> '+'
+            '-', '−', '–', '—' -> '-'
+            '*', 'x', 'X', '×', '•' -> '*'
+            '/', '÷', ':' -> '/'
+            else -> null
+        }
+    }
+
     fun isSingleOperator(text: String): Boolean {
         val trimmed = stripProblemNumber(text).trim()
         if (trimmed.length != 1) return false
-        val c = trimmed.first()
-        return c in "+-*/" || c in "xX×•÷:−–—＋"
+        return canonicalizeOperator(trimmed.first()) != null
+    }
+
+    fun extractSingleOperator(text: String): Char? {
+        val trimmed = stripProblemNumber(text).trim()
+        if (trimmed.length != 1) return null
+        return canonicalizeOperator(trimmed.first())
     }
 
     fun extractOperatorAndNumber(text: String): Pair<Char, String>? {
         val cleaned = stripProblemNumber(text).trim()
         if (cleaned.length < 2) return null
-        var firstChar = cleaned.first()
-        firstChar = when (firstChar) {
-            'x', 'X', '×', '•' -> '*'
-            '÷', ':' -> '/'
-            '−', '–', '—' -> '-'
-            '＋' -> '+'
-            else -> firstChar
-        }
-        if (firstChar !in "+-*/") return null
+        val firstChar = canonicalizeOperator(cleaned.first()) ?: return null
         val remainder = cleaned.substring(1).trim()
         if (remainder.isEmpty() || remainder.toDoubleOrNull() == null) return null
         return Pair(firstChar, remainder)
     }
 
     fun isLineTooSmall(line: RawTextLine): Boolean {
+        // Operators and separator lines are naturally thin and must never be dropped by size
+        if (isSingleOperator(line.normalizedText) || isSingleOperator(line.rawText)) return false
+        if (isSeparatorLine(line.normalizedText) || isSeparatorLine(line.rawText)) return false
+
         if (line.pixelHeight > 0f && line.pixelHeight < MIN_LINE_PIXEL_HEIGHT) return true
         if (line.pixelHeight <= 0f && line.bounds.height < MIN_LINE_NORMALIZED_HEIGHT) return true
         return false
@@ -197,19 +209,9 @@ object SpatialExpressionReconstructor {
             if (isProblemLabel(opLine.rawText) || isSeparatorLine(opLine.rawText)) continue
             if (isLineTooSmall(opLine)) continue
 
-            val rawOpChar = when {
-                isSingleOperator(opLine.normalizedText) -> opLine.normalizedText.trim().first()
-                isSingleOperator(opLine.rawText) -> opLine.rawText.trim().first()
-                else -> null
-            } ?: continue
-
-            val opChar = when (rawOpChar) {
-                'x', 'X', '×', '•' -> '*'
-                '÷', ':' -> '/'
-                '−', '–', '—' -> '-'
-                '＋' -> '+'
-                else -> rawOpChar
-            }
+            val opChar = extractSingleOperator(opLine.normalizedText)
+                ?: extractSingleOperator(opLine.rawText)
+                ?: continue
 
             var bestNumIdx: Int? = null
             var bestHGap = Float.MAX_VALUE
@@ -221,9 +223,10 @@ object SpatialExpressionReconstructor {
                 if (!isPureNumber(numLine.normalizedText)) continue
 
                 val vCenterDiff = abs(numLine.bounds.centerY - opLine.bounds.centerY)
-                if (vCenterDiff <= max(opLine.bounds.height, numLine.bounds.height) * 0.75f) {
+                val maxHeight = max(opLine.bounds.height, numLine.bounds.height)
+                if (vCenterDiff <= maxHeight * 0.75f) {
                     val hGap = numLine.bounds.left - opLine.bounds.right
-                    if (hGap >= -0.05f && hGap <= 0.25f && hGap < bestHGap) {
+                    if (hGap >= -0.05f && hGap <= 0.35f && hGap < bestHGap) {
                         bestHGap = hGap
                         bestNumIdx = numIdx
                     }
@@ -234,9 +237,9 @@ object SpatialExpressionReconstructor {
                 val numLine = lines[bestNumIdx]
                 val numStr = stripProblemNumber(numLine.normalizedText).trim()
                 val mergedBox = RectBounds(
-                    opLine.bounds.left,
+                    min(opLine.bounds.left, numLine.bounds.left),
                     min(opLine.bounds.top, numLine.bounds.top),
-                    numLine.bounds.right,
+                    max(opLine.bounds.right, numLine.bounds.right),
                     max(opLine.bounds.bottom, numLine.bounds.bottom)
                 )
                 columnRows.add(
@@ -254,7 +257,8 @@ object SpatialExpressionReconstructor {
             }
         }
 
-        // 2b. Extract combined operator + number lines (e.g. "+ 15", "- 27")
+
+        // 2b. Extract combined operator + number lines (e.g. "+ 15", "- 27", "× 2", "÷ 3")
         for (idx in lines.indices) {
             if (consumedLineIndices.contains(idx) || usedInRows.contains(idx)) continue
             val line = lines[idx]
@@ -285,7 +289,7 @@ object SpatialExpressionReconstructor {
             }
         }
 
-        // 2c. Extract pure numbers (e.g. "12", "65", "125")
+        // 2c. Extract pure numbers (e.g. "5", "12", "65", "125")
         for (idx in lines.indices) {
             if (consumedLineIndices.contains(idx) || usedInRows.contains(idx)) continue
             val line = lines[idx]
@@ -308,13 +312,37 @@ object SpatialExpressionReconstructor {
             }
         }
 
-        // 2d. Sort all candidate rows by their vertical top position
+        // 2d. Extract standalone operator lines not horizontally merged in 2a (e.g. "×", "÷", "-", "+" between rows)
+        for (idx in lines.indices) {
+            if (consumedLineIndices.contains(idx) || usedInRows.contains(idx)) continue
+            val line = lines[idx]
+            if (isProblemLabel(line.rawText) || isSeparatorLine(line.rawText)) continue
+            if (isLineTooSmall(line)) continue
+
+            val opChar = extractSingleOperator(line.normalizedText)
+                ?: extractSingleOperator(line.rawText)
+            if (opChar != null) {
+                columnRows.add(
+                    ColumnRow(
+                        operator = opChar,
+                        number = null,
+                        bounds = line.bounds,
+                        confidence = line.confidence,
+                        sourceLineIndices = listOf(idx),
+                        numberBounds = line.bounds
+                    )
+                )
+                usedInRows.add(idx)
+            }
+        }
+
+        // 2e. Sort all candidate rows by their vertical top position
         columnRows.sortBy { it.bounds.top }
 
         // Identify all separator lines in the frame to serve as structural problem boundaries
         val separatorLines = lines.filter { isSeparatorLine(it.rawText) || isSeparatorLine(it.normalizedText) }
 
-        // 2e. Cluster column rows into distinct column problems
+        // 2f. Cluster column rows into distinct column problems
         val clusters = mutableListOf<ColumnCluster>()
         for (row in columnRows) {
             var matchedCluster: ColumnCluster? = null
@@ -325,8 +353,12 @@ object SpatialExpressionReconstructor {
 
                 if (row.bounds.top < lastRow.bounds.top) continue
 
-                // Barrier 1: In elementary arithmetic, you never have an operand without an operator following an operator row
-                if (cluster.rows.size >= 2 && row.operator == null) continue
+                // Barrier 1: In elementary arithmetic, you never have an operand without an operator following an existing completed binary problem
+                val numbersInCluster = cluster.rows.count { it.number != null }
+                if (numbersInCluster >= 2 && row.number != null && row.operator == null) {
+                    val prevIsOperator = lastRow.number == null && lastRow.operator != null
+                    if (!prevIsOperator) continue
+                }
 
                 // Barrier 2: Hard structural barrier: a horizontal separator line between lastRow and row indicates a separate problem
                 val hasSeparatorBetween = separatorLines.any { sep ->
@@ -338,7 +370,7 @@ object SpatialExpressionReconstructor {
 
                 val vGap = row.bounds.top - lastRow.bounds.bottom
                 val maxHeight = max(lastRow.bounds.height, row.bounds.height)
-                if (vGap < -0.35f * maxHeight || vGap > 1.6f * maxHeight) continue
+                if (vGap < -0.35f * maxHeight || vGap > 1.8f * maxHeight) continue
 
                 val overlapLeft = max(row.bounds.left, cluster.bounds.left)
                 val overlapRight = min(row.bounds.right, cluster.bounds.right)
@@ -346,8 +378,9 @@ object SpatialExpressionReconstructor {
                 val minW = min(row.bounds.width, cluster.bounds.width)
 
                 val centerDiffX = abs(row.bounds.centerX - cluster.centerX)
-                val isAligned = (overlapWidth >= 0.20f * minW) ||
-                        (centerDiffX <= max(row.bounds.width, cluster.averageWidth) * 0.85f)
+                val isAligned = (overlapWidth >= 0.15f * minW) ||
+                        (centerDiffX <= max(row.bounds.width, cluster.averageWidth) * 0.90f) ||
+                        (row.operator != null && row.bounds.right >= cluster.bounds.left - 0.06f && row.bounds.left <= cluster.bounds.right)
 
                 if (isAligned && vGap < bestDistance) {
                     bestDistance = vGap
@@ -373,9 +406,10 @@ object SpatialExpressionReconstructor {
             }
         }
 
-        // 2f. Process each cluster into a full mathematical candidate
+        // 2g. Process each cluster into a full mathematical candidate
         for (cluster in clusters) {
-            if (cluster.rows.size < 2) continue
+            val operandRows = cluster.rows.filter { it.number != null }
+            if (operandRows.size < 2) continue
 
             val explicitOps = cluster.rows.mapNotNull { it.operator }
             if (explicitOps.isEmpty()) continue
@@ -405,14 +439,23 @@ object SpatialExpressionReconstructor {
                 }
             }
 
-            val topNumber = cluster.rows.first().number
+            val topNumber = operandRows.first().number!!
             val sb = StringBuilder(topNumber)
             val fallbackOp = explicitOps.first()
 
-            for (rIdx in 1 until cluster.rows.size) {
-                val row = cluster.rows[rIdx]
-                val op = row.operator ?: fallbackOp
-                sb.append(" ").append(op).append(" ").append(row.number)
+            for (rIdx in 1 until operandRows.size) {
+                val opRow = operandRows[rIdx]
+                val explicitOpOnRow = opRow.operator
+                val interveningOp = if (explicitOpOnRow == null) {
+                    val prevRow = operandRows[rIdx - 1]
+                    cluster.rows.find {
+                        it.number == null && it.operator != null &&
+                        it.bounds.centerY in prevRow.bounds.centerY..opRow.bounds.centerY
+                    }?.operator
+                } else null
+
+                val op = explicitOpOnRow ?: interveningOp ?: fallbackOp
+                sb.append(" ").append(op).append(" ").append(opRow.number)
             }
 
             val expressionText = sb.toString()
@@ -441,14 +484,16 @@ object SpatialExpressionReconstructor {
             if (isClippedByScreenEdge(unionBox)) continue
 
             val rawText = cluster.rows.joinToString("\n") { row ->
-                if (row.operator != null) "${row.operator} ${row.number}" else row.number
+                if (row.operator != null && row.number != null) "${row.operator} ${row.number}"
+                else if (row.operator != null) "${row.operator}"
+                else row.number ?: ""
             }
 
-            // Compute digits column bounds across all rows in cluster (excludes leftmost operator)
-            val digitLeft = cluster.rows.map { it.numberBounds.left }.minOrNull() ?: unionBox.left
-            val digitTop = cluster.rows.map { it.numberBounds.top }.minOrNull() ?: unionBox.top
-            val digitRight = cluster.rows.map { it.numberBounds.right }.maxOrNull() ?: unionBox.right
-            val digitBottom = cluster.rows.map { it.numberBounds.bottom }.maxOrNull() ?: unionBox.bottom
+            // Compute digits column bounds across all operand rows in cluster (excludes leftmost operator)
+            val digitLeft = operandRows.map { it.numberBounds.left }.minOrNull() ?: unionBox.left
+            val digitTop = operandRows.map { it.numberBounds.top }.minOrNull() ?: unionBox.top
+            val digitRight = operandRows.map { it.numberBounds.right }.maxOrNull() ?: unionBox.right
+            val digitBottom = operandRows.map { it.numberBounds.bottom }.maxOrNull() ?: unionBox.bottom
             val digitsBounds = RectBounds(digitLeft, digitTop, digitRight, digitBottom)
 
             candidates.add(
