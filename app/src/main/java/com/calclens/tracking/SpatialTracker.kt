@@ -76,18 +76,22 @@ class SpatialTracker(
                             is MathResult.Success -> {
                                 entity.result = mathResult.formatted
                                 entity.status = TrackingStatus.DISPLAYING
+                                android.util.Log.d("CalcLens", "Evaluated '${entity.normalizedText}' = ${mathResult.formatted} (matches=${entity.consecutiveMatches})")
                             }
                             is MathResult.DivisionByZero -> {
                                 entity.errorMessage = "Undefined"
                                 entity.status = TrackingStatus.DISPLAYING
+                                android.util.Log.d("CalcLens", "Evaluated '${entity.normalizedText}' = DivisionByZero")
                             }
                             is MathResult.Overflow -> {
                                 entity.errorMessage = "Overflow"
                                 entity.status = TrackingStatus.DISPLAYING
+                                android.util.Log.d("CalcLens", "Evaluated '${entity.normalizedText}' = Overflow")
                             }
                             is MathResult.SyntaxError -> {
                                 entity.errorMessage = "Invalid"
                                 entity.status = TrackingStatus.DISPLAYING
+                                android.util.Log.d("CalcLens", "Evaluated '${entity.normalizedText}' = SyntaxError: ${mathResult.message}")
                             }
                         }
                     } else {
@@ -95,6 +99,7 @@ class SpatialTracker(
                     }
                 } else {
                     entity.status = TrackingStatus.DETECTED
+                    android.util.Log.d("CalcLens", "Candidate '${entity.normalizedText}' accumulating matches: ${entity.consecutiveMatches}/$minFramesToDisplay")
                 }
             } else {
                 // New Candidate

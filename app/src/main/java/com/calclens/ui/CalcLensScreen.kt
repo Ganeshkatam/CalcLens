@@ -31,7 +31,6 @@ import com.calclens.tracking.TrackingStatus
 import com.calclens.ui.theme.*
 import com.calclens.vision.TextRecognitionAnalyzer
 import com.calclens.vision.VisionCandidate
-import kotlinx.coroutines.delay
 
 @Composable
 fun CalcLensScreen() {
@@ -44,7 +43,6 @@ fun CalcLensScreen() {
 
     var torchEnabled by remember { mutableStateOf(false) }
     var showStats by remember { mutableStateOf(false) }
-    var activeMode by remember { mutableStateOf("LIVE_CAMERA") }
 
     var activeLayouts by remember { mutableStateOf<List<BadgeLayout>>(emptyList()) }
     var globalStatus by remember { mutableStateOf("SEARCHING") }
@@ -91,96 +89,7 @@ fun CalcLensScreen() {
 
     val analyzer = remember {
         TextRecognitionAnalyzer { candidates ->
-            if (activeMode == "LIVE_CAMERA") {
-                processCandidates(candidates)
-            }
-        }
-    }
-
-    // Interactive Demo Simulation Loop for on-device scenario validation
-    LaunchedEffect(activeMode) {
-        if (activeMode == "DEMO_SINGLE") {
-            tracker.clear()
-            while (true) {
-                processCandidates(
-                    listOf(
-                        VisionCandidate(
-                            id = "demo-1",
-                            rawText = "27 × 14",
-                            normalizedText = "27 * 14",
-                            boundingBox = RectF(0.25f, 0.40f, 0.75f, 0.47f),
-                            confidence = 0.96f
-                        )
-                    )
-                )
-                delay(250)
-            }
-        } else if (activeMode == "DEMO_MOTION") {
-            var step = 0f
-            while (true) {
-                step += 0.08f
-                val dx = kotlin.math.sin(step) * 0.12f
-                val dy = kotlin.math.cos(step) * 0.06f
-
-                processCandidates(
-                    listOf(
-                        VisionCandidate(
-                            id = "demo-motion",
-                            rawText = "27 × 14",
-                            normalizedText = "27 * 14",
-                            boundingBox = RectF(0.25f + dx, 0.40f + dy, 0.75f + dx, 0.47f + dy),
-                            confidence = 0.96f
-                        )
-                    )
-                )
-                delay(100)
-            }
-        } else if (activeMode == "DEMO_MULTI") {
-            tracker.clear()
-            while (true) {
-                processCandidates(
-                    listOf(
-                        VisionCandidate(
-                            id = "demo-m1",
-                            rawText = "12 + 8",
-                            normalizedText = "12 + 8",
-                            boundingBox = RectF(0.12f, 0.30f, 0.45f, 0.36f),
-                            confidence = 0.95f
-                        ),
-                        VisionCandidate(
-                            id = "demo-m2",
-                            rawText = "7 × 9",
-                            normalizedText = "7 * 9",
-                            boundingBox = RectF(0.55f, 0.30f, 0.88f, 0.36f),
-                            confidence = 0.94f
-                        ),
-                        VisionCandidate(
-                            id = "demo-m3",
-                            rawText = "100 ÷ 4",
-                            normalizedText = "100 / 4",
-                            boundingBox = RectF(0.28f, 0.55f, 0.72f, 0.61f),
-                            confidence = 0.93f
-                        )
-                    )
-                )
-                delay(250)
-            }
-        } else if (activeMode == "DEMO_ZERO") {
-            tracker.clear()
-            while (true) {
-                processCandidates(
-                    listOf(
-                        VisionCandidate(
-                            id = "demo-zero",
-                            rawText = "100 ÷ 0",
-                            normalizedText = "100 / 0",
-                            boundingBox = RectF(0.25f, 0.42f, 0.75f, 0.49f),
-                            confidence = 0.97f
-                        )
-                    )
-                )
-                delay(250)
-            }
+            processCandidates(candidates)
         }
     }
 
@@ -342,49 +251,9 @@ fun CalcLensScreen() {
                 Column {
                     Text(text = "CALCLENS DIAGNOSTICS", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = TextSecondary)
                     Spacer(modifier = Modifier.height(4.dp))
-                    Text(text = "Mode: $activeMode", fontSize = 13.sp, color = TextPrimary, fontFamily = FontFamily.Monospace)
+                    Text(text = "Status: $globalStatus", fontSize = 13.sp, color = TextPrimary, fontFamily = FontFamily.Monospace)
                     Text(text = "Active Tracks: ${activeLayouts.size}", fontSize = 13.sp, color = TextPrimary, fontFamily = FontFamily.Monospace)
                     Text(text = "Processing Latency: ${lastOcrLatency} ms", fontSize = 13.sp, color = TextPrimary, fontFamily = FontFamily.Monospace)
-                }
-            }
-        }
-
-        // Layer 4: Interactive Mode Bar (Bottom)
-        Row(
-            modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .navigationBarsPadding()
-                .padding(bottom = 20.dp, start = 16.dp, end = 16.dp)
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(14.dp))
-                .background(FrostedGlass)
-                .border(1.dp, PillBorder, RoundedCornerShape(14.dp))
-                .padding(4.dp),
-            horizontalArrangement = Arrangement.SpaceEvenly
-        ) {
-            val modes = listOf(
-                "LIVE_CAMERA" to "Live OCR",
-                "DEMO_SINGLE" to "27 × 14",
-                "DEMO_MOTION" to "Track Motion",
-                "DEMO_MULTI" to "Multi",
-                "DEMO_ZERO" to "100 ÷ 0"
-            )
-
-            for ((modeKey, label) in modes) {
-                val isSelected = activeMode == modeKey
-                Box(
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(10.dp))
-                        .background(if (isSelected) AccentBlue else Color.Transparent)
-                        .clickable { activeMode = modeKey }
-                        .padding(horizontal = 10.dp, vertical = 8.dp)
-                ) {
-                    Text(
-                        text = label,
-                        color = TextPrimary,
-                        fontSize = 11.sp,
-                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
-                    )
                 }
             }
         }

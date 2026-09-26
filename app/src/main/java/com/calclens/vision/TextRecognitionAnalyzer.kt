@@ -37,34 +37,43 @@ class TextRecognitionAnalyzer(
 
         recognizer.process(image)
             .addOnSuccessListener { visionText ->
-                val candidates = mutableListOf<VisionCandidate>()
+                val rawLines = mutableListOf<RawTextLine>()
 
                 for (block in visionText.textBlocks) {
                     for (line in block.lines) {
                         val rawText = line.text
                         val normalized = ExpressionNormalizer.normalize(rawText)
-
-                        if (MathRegionFilter.isViableArithmetic(normalized, confidence = line.confidence)) {
-                            val box = line.boundingBox
-                            val normalizedBox = if (box != null) {
-                                normalizeBoundingBox(box, imageWidth, imageHeight)
-                            } else {
-                                RectF(0.2f, 0.4f, 0.8f, 0.5f)
-                            }
-
-                            candidates.add(
-                                VisionCandidate(
-                                    id = "cand-${idCounter.incrementAndGet()}",
-                                    rawText = rawText,
-                                    normalizedText = normalized,
-                                    boundingBox = normalizedBox,
-                                    confidence = line.confidence
-                                )
-                            )
+                        val box = line.boundingBox
+                        val normalizedBox = if (box != null) {
+                            normalizeBoundingBox(box, imageWidth, imageHeight)
+                        } else {
+                            RectBounds(0.2f, 0.4f, 0.8f, 0.5f)
                         }
+
+                        android.util.Log.d("CalcLens", "OCR Line: '$rawText' -> Normalized: '$normalized' (confidence=${line.confidence})")
+
+                        rawLines.add(
+                            RawTextLine(
+                                rawText = rawText,
+                                normalizedText = normalized,
+                                bounds = normalizedBox,
+                                confidence = line.confidence
+                            )
+                        )
                     }
                 }
 
+                val candidates = SpatialExpressionReconstructor.reconstruct(rawLines) {
+                    "cand-${idCounter.incrementAndGet()}"
+                }
+
+                for (candidate in candidates) {
+                    android.util.Log.d("CalcLens", "Candidate Accepted: '${candidate.normalizedText}' at ${candidate.boundingBox}")
+                }
+
+                if (candidates.isNotEmpty()) {
+                    android.util.Log.d("CalcLens", "Total viable candidates in frame: ${candidates.size}")
+                }
                 onCandidatesDetected(candidates)
             }
             .addOnFailureListener {
@@ -77,11 +86,11 @@ class TextRecognitionAnalyzer(
             }
     }
 
-    private fun normalizeBoundingBox(box: Rect, imageWidth: Int, imageHeight: Int): RectF {
+    private fun normalizeBoundingBox(box: Rect, imageWidth: Int, imageHeight: Int): RectBounds {
         val w = imageWidth.toFloat().coerceAtLeast(1f)
         val h = imageHeight.toFloat().coerceAtLeast(1f)
 
-        return RectF(
+        return RectBounds(
             (box.left.toFloat() / w).coerceIn(0f, 1f),
             (box.top.toFloat() / h).coerceIn(0f, 1f),
             (box.right.toFloat() / w).coerceIn(0f, 1f),
