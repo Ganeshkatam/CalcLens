@@ -49,7 +49,7 @@ class TextRecognitionAnalyzer(
                             val normalizedBox = if (box != null) {
                                 normalizeBoundingBox(box, imageWidth, imageHeight)
                             } else {
-                                RectF(0.2f, 0.4f, 0.6f, 0.1f)
+                                RectF(0.2f, 0.4f, 0.8f, 0.5f)
                             }
 
                             candidates.add(
@@ -82,10 +82,10 @@ class TextRecognitionAnalyzer(
         val h = imageHeight.toFloat().coerceAtLeast(1f)
 
         return RectF(
-            (box.left / w).coerceIn(0f, 1f),
-            (box.top / h).coerceIn(0f, 1f),
-            (box.width() / w).coerceIn(0.01f, 1f),
-            (box.height() / h).coerceIn(0.01f, 1f)
+            (box.left.toFloat() / w).coerceIn(0f, 1f),
+            (box.top.toFloat() / h).coerceIn(0f, 1f),
+            (box.right.toFloat() / w).coerceIn(0f, 1f),
+            (box.bottom.toFloat() / h).coerceIn(0f, 1f)
         )
     }
 }

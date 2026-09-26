@@ -1,7 +1,7 @@
 package com.calclens.vision
 
 object MathRegionFilter {
-    private val mathPattern = Regex("^[0-9().\\s]+[+\\-*/][0-9().\\s+\\-*/]*$")
+    private val mathPattern = Regex("^[0-9().\\s]+[+\\-*/][0-9().\\s+\\-*/]*[0-9)]\\s*$")
 
     fun isViableArithmetic(
         expression: String,

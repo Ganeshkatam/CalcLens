@@ -33,5 +33,10 @@ class ExpressionNormalizerTest {
         assertTrue(MathRegionFilter.isViableArithmetic("125 + 87", 0.90f))
         assertFalse(MathRegionFilter.isViableArithmetic("27 * 14", 0.40f))
         assertFalse(MathRegionFilter.isViableArithmetic("not a math equation", 0.95f))
+        // Incomplete / trailing operator rejection
+        assertFalse(MathRegionFilter.isViableArithmetic("27 + ", 0.95f))
+        assertFalse(MathRegionFilter.isViableArithmetic("27 *", 0.95f))
+        assertFalse(MathRegionFilter.isViableArithmetic("+ 14", 0.95f))
+        assertFalse(MathRegionFilter.isViableArithmetic("42", 0.95f))
     }
 }
