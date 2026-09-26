@@ -1,0 +1,12 @@
+# Node
+node_modules/
+
+# Expo
+.expo/
+
+# OS
+.DS_Store
+
+# Environment
+.env
+.env.*
