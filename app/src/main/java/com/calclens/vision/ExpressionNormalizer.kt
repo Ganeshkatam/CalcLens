@@ -18,8 +18,8 @@ object ExpressionNormalizer {
             .replace('—', '-')
             .replace('＋', '+')
 
-        // Normalize letter 'x' or 'X' to '*' when between digits, spaces, or math characters
-        text = text.replace(Regex("(?<=[0-9\\s])[xX](?=[0-9\\s])"), "*")
+        // Normalize letter 'x' or 'X' to '*' when at start/end of line or adjacent to digits/spaces
+        text = text.replace(Regex("(?<=^|[0-9\\s])[xX](?=[0-9\\s]|$)"), "*")
 
         // 2. Contextual OCR digit confusion fixes
         if (text.contains(Regex("[+\\-*/]"))) {

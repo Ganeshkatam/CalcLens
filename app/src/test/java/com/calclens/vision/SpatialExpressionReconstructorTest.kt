@@ -153,6 +153,35 @@ class SpatialExpressionReconstructorTest {
     }
 
     @Test
+    fun testColumnMultiplicationWithLetterX() {
+        //   2
+        // X 4
+        val lines = listOf(
+            RawTextLine(
+                rawText = "2",
+                normalizedText = ExpressionNormalizer.normalize("2"),
+                bounds = RectBounds(0.40f, 0.20f, 0.58f, 0.25f),
+                confidence = 0.95f,
+                pixelHeight = 25f
+            ),
+            RawTextLine(
+                rawText = "X 4",
+                normalizedText = ExpressionNormalizer.normalize("X 4"),
+                bounds = RectBounds(0.36f, 0.26f, 0.58f, 0.31f),
+                confidence = 0.92f,
+                pixelHeight = 25f
+            )
+        )
+
+        val candidates = SpatialExpressionReconstructor.reconstruct(lines) { "test-x-mult" }
+        assertEquals(1, candidates.size)
+        assertEquals("2 * 4", candidates[0].normalizedText)
+
+        val res = MathEngine.evaluate(candidates[0].normalizedText) as MathResult.Success
+        assertEquals("8", res.formatted)
+    }
+
+    @Test
     fun testColumnWithSeparatorLine() {
         //   125
         // +  87
@@ -444,5 +473,44 @@ class SpatialExpressionReconstructorTest {
 
         val result = SpatialExpressionReconstructor.reconstructWithDiagnostics(lines) { "test-cropped" }
         assertEquals(0, result.candidates.size)
+    }
+
+    @Test
+    fun testVerticalMultiplicationGridWorksheet() {
+        // Multi-column vertical multiplication worksheet:
+        // Col 1:  8 / × 3 / ──── -> 24
+        // Col 2:  4 / × 4 / ──── -> 16
+        // Col 3:  2 / × 4 / ──── -> 8
+        val lines = listOf(
+            // Column 1
+            RawTextLine("8", "8", RectBounds(0.12f, 0.20f, 0.18f, 0.25f), 0.90f, 24f),
+            RawTextLine("×", "*", RectBounds(0.08f, 0.27f, 0.11f, 0.32f), 0.45f, 24f),
+            RawTextLine("3", "3", RectBounds(0.12f, 0.27f, 0.18f, 0.32f), 0.92f, 24f),
+            RawTextLine("────", "----", RectBounds(0.07f, 0.34f, 0.20f, 0.35f), 0.90f, 6f),
+
+            // Column 2
+            RawTextLine("4", "4", RectBounds(0.42f, 0.20f, 0.48f, 0.25f), 0.88f, 24f),
+            RawTextLine("×", "*", RectBounds(0.38f, 0.27f, 0.41f, 0.32f), 0.42f, 24f),
+            RawTextLine("4", "4", RectBounds(0.42f, 0.27f, 0.48f, 0.32f), 0.89f, 24f),
+            RawTextLine("────", "----", RectBounds(0.37f, 0.34f, 0.50f, 0.35f), 0.90f, 6f),
+
+            // Column 3
+            RawTextLine("2", "2", RectBounds(0.72f, 0.20f, 0.78f, 0.25f), 0.91f, 24f),
+            RawTextLine("X", "*", RectBounds(0.68f, 0.27f, 0.71f, 0.32f), 0.40f, 24f),
+            RawTextLine("4", "4", RectBounds(0.72f, 0.27f, 0.78f, 0.32f), 0.93f, 24f),
+            RawTextLine("────", "----", RectBounds(0.67f, 0.34f, 0.80f, 0.35f), 0.90f, 6f)
+        )
+
+        val candidates = SpatialExpressionReconstructor.reconstruct(lines) { "grid-cand" }
+        assertEquals(3, candidates.size)
+
+        val sorted = candidates.sortedBy { it.boundingBox.left }
+        assertEquals("8 * 3", sorted[0].normalizedText)
+        assertEquals("4 * 4", sorted[1].normalizedText)
+        assertEquals("2 * 4", sorted[2].normalizedText)
+
+        assertEquals("24", (MathEngine.evaluate(sorted[0].normalizedText) as MathResult.Success).formatted)
+        assertEquals("16", (MathEngine.evaluate(sorted[1].normalizedText) as MathResult.Success).formatted)
+        assertEquals("8", (MathEngine.evaluate(sorted[2].normalizedText) as MathResult.Success).formatted)
     }
 }

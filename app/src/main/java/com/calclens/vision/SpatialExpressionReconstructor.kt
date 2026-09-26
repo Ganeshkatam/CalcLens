@@ -93,13 +93,22 @@ object SpatialExpressionReconstructor {
 
     fun isSingleOperator(text: String): Boolean {
         val trimmed = stripProblemNumber(text).trim()
-        return trimmed.length == 1 && trimmed.first() in "+-*/"
+        if (trimmed.length != 1) return false
+        val c = trimmed.first()
+        return c in "+-*/" || c in "xX×•÷"
     }
 
     fun extractOperatorAndNumber(text: String): Pair<Char, String>? {
         val cleaned = stripProblemNumber(text).trim()
         if (cleaned.length < 2) return null
-        val firstChar = cleaned.first()
+        var firstChar = cleaned.first()
+        firstChar = when (firstChar) {
+            'x', 'X', '×', '•' -> '*'
+            '÷', ':' -> '/'
+            '−', '–', '—' -> '-'
+            '＋' -> '+'
+            else -> firstChar
+        }
         if (firstChar !in "+-*/") return null
         val remainder = cleaned.substring(1).trim()
         if (remainder.isEmpty() || remainder.toDoubleOrNull() == null) return null
@@ -180,11 +189,19 @@ object SpatialExpressionReconstructor {
             if (isProblemLabel(opLine.rawText) || isSeparatorLine(opLine.rawText)) continue
             if (isLineTooSmall(opLine)) continue
 
-            val opChar = when {
+            val rawOpChar = when {
                 isSingleOperator(opLine.normalizedText) -> opLine.normalizedText.trim().first()
                 isSingleOperator(opLine.rawText) -> opLine.rawText.trim().first()
                 else -> null
             } ?: continue
+
+            val opChar = when (rawOpChar) {
+                'x', 'X', '×', '•' -> '*'
+                '÷', ':' -> '/'
+                '−', '–', '—' -> '-'
+                '＋' -> '+'
+                else -> rawOpChar
+            }
 
             var bestNumIdx: Int? = null
             var bestHGap = Float.MAX_VALUE
@@ -219,7 +236,7 @@ object SpatialExpressionReconstructor {
                         operator = opChar,
                         number = numStr,
                         bounds = mergedBox,
-                        confidence = min(opLine.confidence, numLine.confidence),
+                        confidence = numLine.confidence,
                         sourceLineIndices = listOf(opIdx, bestNumIdx)
                     )
                 )
@@ -367,7 +384,7 @@ object SpatialExpressionReconstructor {
             }
 
             val expressionText = sb.toString()
-            val clusterConfidence = cluster.rows.map { it.confidence }.minOrNull() ?: 0.5f
+            val clusterConfidence = cluster.rows.map { it.confidence }.average().toFloat()
 
             if (clusterConfidence < minConfidence) continue
             if (!MathRegionFilter.isViableArithmetic(expressionText, confidence = clusterConfidence, minConfidence = minConfidence)) continue
