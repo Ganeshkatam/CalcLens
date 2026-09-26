@@ -35,6 +35,8 @@ class SpatialTracker(
         for (entity in entities.values) {
             entity.smoothedBox = entity.smoothedBox.offset(deltaX, deltaY)
             entity.boundingBox = entity.boundingBox.offset(deltaX, deltaY)
+            entity.smoothedContentBox = entity.smoothedContentBox.offset(deltaX, deltaY)
+            entity.contentBounds = entity.contentBounds.offset(deltaX, deltaY)
         }
     }
 
@@ -98,6 +100,8 @@ class SpatialTracker(
                 entity.velocityY = (candidate.boundingBox.centerY - entity.boundingBox.centerY) / dt
 
                 entity.boundingBox = candidate.boundingBox
+                entity.contentBounds = candidate.contentBounds
+                entity.layout = candidate.layout
                 entity.confidence = candidate.confidence
                 entity.lastSeen = currentTime
 
@@ -109,6 +113,13 @@ class SpatialTracker(
                     alpha * candidate.boundingBox.top + (1f - alpha) * entity.smoothedBox.top,
                     alpha * candidate.boundingBox.right + (1f - alpha) * entity.smoothedBox.right,
                     alpha * candidate.boundingBox.bottom + (1f - alpha) * entity.smoothedBox.bottom
+                )
+
+                entity.smoothedContentBox = RectBounds(
+                    alpha * candidate.contentBounds.left + (1f - alpha) * entity.smoothedContentBox.left,
+                    alpha * candidate.contentBounds.top + (1f - alpha) * entity.smoothedContentBox.top,
+                    alpha * candidate.contentBounds.right + (1f - alpha) * entity.smoothedContentBox.right,
+                    alpha * candidate.contentBounds.bottom + (1f - alpha) * entity.smoothedContentBox.bottom
                 )
 
                 // Confirm and calculate expression once stable across multiple frames
@@ -149,6 +160,9 @@ class SpatialTracker(
                         confidence = candidate.confidence,
                         boundingBox = candidate.boundingBox,
                         smoothedBox = candidate.boundingBox,
+                        layout = candidate.layout,
+                        contentBounds = candidate.contentBounds,
+                        smoothedContentBox = candidate.contentBounds,
                         firstSeen = currentTime,
                         lastSeen = currentTime,
                         consecutiveMatches = 1,
@@ -172,10 +186,10 @@ class SpatialTracker(
                 } else {
                     // Maintain last known position with slight velocity extrapolation
                     val dt = 0.016f
-                    entity.smoothedBox = entity.smoothedBox.offset(
-                        entity.velocityX * dt * 0.4f,
-                        entity.velocityY * dt * 0.4f
-                    )
+                    val offX = entity.velocityX * dt * 0.4f
+                    val offY = entity.velocityY * dt * 0.4f
+                    entity.smoothedBox = entity.smoothedBox.offset(offX, offY)
+                    entity.smoothedContentBox = entity.smoothedContentBox.offset(offX, offY)
                 }
             }
         }

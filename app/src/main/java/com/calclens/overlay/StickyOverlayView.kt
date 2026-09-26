@@ -101,17 +101,38 @@ class StickyOverlayView(
             it.status == TrackingStatus.DISPLAYING && (it.result != null || it.errorMessage != null)
         }
 
-        val textBounds = android.graphics.Rect()
-
-        for (entity in activeEntities) {
+        val rawLayouts = activeEntities.map { entity ->
             val exprBounds = transformer.toScreenRect(entity.smoothedBox)
+            val contentBounds = transformer.toScreenRect(entity.smoothedContentBox)
             val textToDisplay = entity.result ?: entity.errorMessage ?: ""
             val badgeBounds = transformer.computeBadgePlacement(
                 expressionRect = exprBounds,
+                contentRect = contentBounds,
+                layout = entity.layout,
                 textLength = textToDisplay.length
             )
+            BadgeLayout(
+                id = entity.id,
+                badgeRect = badgeBounds,
+                expressionRect = exprBounds,
+                result = entity.result,
+                errorMessage = entity.errorMessage,
+                status = entity.status,
+                rawText = entity.rawText,
+                layout = entity.layout,
+                contentRect = contentBounds
+            )
+        }
 
-            // 1. Draw dashed/clean reticle around physical equation
+        val resolvedLayouts = CollisionAvoidance.resolveCollisions(rawLayouts)
+        val textBounds = android.graphics.Rect()
+
+        for (layout in resolvedLayouts) {
+            val exprBounds = layout.expressionRect
+            val badgeBounds = layout.badgeRect
+            val textToDisplay = layout.result ?: layout.errorMessage ?: ""
+
+            // 1. Draw clean reticle around physical equation
             canvas.drawRoundRect(
                 exprBounds.left,
                 exprBounds.top,
@@ -123,14 +144,14 @@ class StickyOverlayView(
             )
 
             // 2. Draw anchored result badge
-            val border = if (entity.errorMessage != null) errorBorderPaint else badgeBorderPaint
+            val border = if (layout.errorMessage != null) errorBorderPaint else badgeBorderPaint
             canvas.drawRoundRect(
                 badgeBounds.left,
                 badgeBounds.top,
                 badgeBounds.right,
                 badgeBounds.bottom,
-                16f,
-                16f,
+                14f,
+                14f,
                 badgeBgPaint
             )
             canvas.drawRoundRect(
@@ -138,13 +159,13 @@ class StickyOverlayView(
                 badgeBounds.top,
                 badgeBounds.right,
                 badgeBounds.bottom,
-                16f,
-                16f,
+                14f,
+                14f,
                 border
             )
 
             // 3. Draw result text vertically centered in badge with dynamic scale
-            val dynamicTextSize = (badgeBounds.height * 0.65f).coerceIn(24f, 44f)
+            val dynamicTextSize = (badgeBounds.height * 0.65f).coerceIn(22f, 40f)
             textPaint.textSize = dynamicTextSize
             textPaint.getTextBounds(textToDisplay, 0, textToDisplay.length, textBounds)
             val textY = badgeBounds.centerY + (textBounds.height() * 0.35f)

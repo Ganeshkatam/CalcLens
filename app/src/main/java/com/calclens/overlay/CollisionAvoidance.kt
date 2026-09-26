@@ -27,8 +27,8 @@ object CollisionAvoidance {
         for (i in sorted.indices) {
             val current = sorted[i]
             var currentBadge = current.badgeRect
-            val anchorCenterX = current.expressionRect.centerX
-            val maxAllowedShiftX = max(16f, current.expressionRect.width * 0.18f)
+            val anchorCenterX = current.contentRect.centerX
+            val maxAllowedShiftX = max(16f, current.contentRect.width * 0.18f)
 
             if (resolved.isNotEmpty()) {
                 val previous = resolved.last()

@@ -424,14 +424,14 @@ class SpatialExpressionReconstructorTest {
 
     @Test
     fun testTextTooFarFlaggedAndRejected() {
-        // Characters are too small (pixelHeight = 10f, below 16px threshold)
+        // Characters are too small (pixelHeight = 8f, below 10px threshold)
         val lines = listOf(
             RawTextLine(
                 rawText = "60 + 26",
                 normalizedText = "60 + 26",
                 bounds = RectBounds(0.40f, 0.45f, 0.60f, 0.46f),
                 confidence = 0.90f,
-                pixelHeight = 10f
+                pixelHeight = 8f
             )
         )
 

@@ -1,5 +1,6 @@
 package com.calclens.tracking
 
+import com.calclens.vision.ExpressionLayout
 import com.calclens.vision.RectBounds
 
 enum class TrackingStatus {
@@ -18,6 +19,9 @@ data class TrackedEquation(
     var confidence: Float,
     var boundingBox: RectBounds,
     var smoothedBox: RectBounds,
+    var layout: ExpressionLayout = ExpressionLayout.HORIZONTAL,
+    var contentBounds: RectBounds = boundingBox,
+    var smoothedContentBox: RectBounds = boundingBox,
     var velocityX: Float = 0f,
     var velocityY: Float = 0f,
     val firstSeen: Long = System.currentTimeMillis(),

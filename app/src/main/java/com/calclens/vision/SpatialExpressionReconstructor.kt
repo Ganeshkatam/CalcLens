@@ -40,7 +40,8 @@ private data class ColumnRow(
     val number: String,
     val bounds: RectBounds,
     val confidence: Float,
-    val sourceLineIndices: List<Int>
+    val sourceLineIndices: List<Int>,
+    val numberBounds: RectBounds = bounds
 )
 
 private data class ColumnCluster(
@@ -54,8 +55,8 @@ private data class ColumnCluster(
 object SpatialExpressionReconstructor {
 
     // Thresholds for character resolution operating envelope
-    const val MIN_LINE_PIXEL_HEIGHT = 16f
-    const val MIN_LINE_NORMALIZED_HEIGHT = 0.012f
+    const val MIN_LINE_PIXEL_HEIGHT = 10f
+    const val MIN_LINE_NORMALIZED_HEIGHT = 0.008f
 
     // Matches standalone problem labels like "(i)", "(iv)", "(a)", "1.", "1)", "(12)", "[3]"
     private val standaloneProblemLabelRegex = Regex(
@@ -171,7 +172,9 @@ object SpatialExpressionReconstructor {
                         rawText = line.rawText,
                         normalizedText = stripped,
                         boundingBox = line.bounds,
-                        confidence = line.confidence
+                        confidence = line.confidence,
+                        layout = ExpressionLayout.HORIZONTAL,
+                        contentBounds = line.bounds
                     )
                 )
                 consumedLineIndices.add(i)
@@ -237,7 +240,8 @@ object SpatialExpressionReconstructor {
                         number = numStr,
                         bounds = mergedBox,
                         confidence = numLine.confidence,
-                        sourceLineIndices = listOf(opIdx, bestNumIdx)
+                        sourceLineIndices = listOf(opIdx, bestNumIdx),
+                        numberBounds = numLine.bounds
                     )
                 )
                 usedInRows.add(opIdx)
@@ -255,13 +259,21 @@ object SpatialExpressionReconstructor {
             val opAndNum = extractOperatorAndNumber(line.normalizedText)
                 ?: extractOperatorAndNumber(line.rawText)
             if (opAndNum != null) {
+                val numWidth = line.bounds.width * 0.65f
+                val numBounds = RectBounds(
+                    line.bounds.right - numWidth,
+                    line.bounds.top,
+                    line.bounds.right,
+                    line.bounds.bottom
+                )
                 columnRows.add(
                     ColumnRow(
                         operator = opAndNum.first,
                         number = opAndNum.second,
                         bounds = line.bounds,
                         confidence = line.confidence,
-                        sourceLineIndices = listOf(idx)
+                        sourceLineIndices = listOf(idx),
+                        numberBounds = numBounds
                     )
                 )
                 usedInRows.add(idx)
@@ -283,7 +295,8 @@ object SpatialExpressionReconstructor {
                         number = numStr,
                         bounds = line.bounds,
                         confidence = line.confidence,
-                        sourceLineIndices = listOf(idx)
+                        sourceLineIndices = listOf(idx),
+                        numberBounds = line.bounds
                     )
                 )
                 usedInRows.add(idx)
@@ -412,13 +425,22 @@ object SpatialExpressionReconstructor {
                 if (row.operator != null) "${row.operator} ${row.number}" else row.number
             }
 
+            // Compute digits column bounds across all rows in cluster (excludes leftmost operator)
+            val digitLeft = cluster.rows.map { it.numberBounds.left }.minOrNull() ?: unionBox.left
+            val digitTop = cluster.rows.map { it.numberBounds.top }.minOrNull() ?: unionBox.top
+            val digitRight = cluster.rows.map { it.numberBounds.right }.maxOrNull() ?: unionBox.right
+            val digitBottom = cluster.rows.map { it.numberBounds.bottom }.maxOrNull() ?: unionBox.bottom
+            val digitsBounds = RectBounds(digitLeft, digitTop, digitRight, digitBottom)
+
             candidates.add(
                 VisionCandidate(
                     id = idGenerator(),
                     rawText = rawText,
                     normalizedText = expressionText,
                     boundingBox = unionBox,
-                    confidence = clusterConfidence
+                    confidence = clusterConfidence,
+                    layout = ExpressionLayout.VERTICAL_COLUMN,
+                    contentBounds = digitsBounds
                 )
             )
 
